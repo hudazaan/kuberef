@@ -1,0 +1,12 @@
+# Python junk
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# Poetry/Environment junk
+.venv/
+dist/
+
+# System junk
+.DS_Store
+Thumbs.db
