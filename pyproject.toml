@@ -1,6 +1,6 @@
 [project]
 name = "kuberef"
-version = "0.1.1"
+version = "0.1.2"
 description = "A Cloud-Native validator for Kubernetes Secret references."
 authors = [
     {name = "hudazaan", email = "naazhuda2000@gmail.com"}

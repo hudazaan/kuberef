@@ -20,7 +20,7 @@ It bridges the gap between static YAML manifests and your live cluster state, en
 
 ### From TestPyPI (Current Release)
 ```bash
-pip install --index-url [https://test.pypi.org/simple/](https://test.pypi.org/simple --extra-index-url [https://pypi.org/simple/](https://pypi.org/simple/) kuberef
+pip install --index-url https://test.pypi.org/simple/ --extra-index-url https://pypi.org/simple/ kuberef
 ```
 
 ### From Source (Development)
