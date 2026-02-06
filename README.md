@@ -19,15 +19,24 @@ It bridges the gap between static YAML manifests and your live cluster state, en
 ## Installation
 
 ### From TestPyPI (Current Release)
+
+:::note[Note]
+⚠️ Since this is a TestPyPI release, please use the installation command below to ensure all dependencies (PyYAML, Typer, etc.) are pulled correctly from the main PyPI registry.
+:::
+
 ```bash
 pip install --no-cache-dir --index-url https://test.pypi.org/simple/ --extra-index-url https://pypi.org/simple/ kuberef
 ```
 
 ### From Source (Development)
+
+If you want to run the tool from source or contribute:
+
 ```bash
-git clone https://github.com/your-username/kuberef.git
+git clone https://github.com/hudazaan/kuberef.git
 cd kuberef
 poetry install
+poetry run kuberef path/to/your/k8s-manifest.yaml
 ```
 
 ---
@@ -79,8 +88,14 @@ Contributions are welcome!
 
 ---
 
+## Author 
+
+Built with ❤️ by **Huda Naaz**
+
+---
+
 ## 📄 License
 
-Distributed under the MIT License.
+Distributed under the MIT License. See `LICENSE` for more information.
 
 ---

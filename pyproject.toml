@@ -5,7 +5,9 @@ description = "A Cloud-Native validator for Kubernetes Secret references."
 authors = [
     {name = "hudazaan", email = "naazhuda2000@gmail.com"}
 ]
+license = "MIT"
 readme = "README.md"
+repository = "https://github.com/hudazaan/kuberef"
 requires-python = ">=3.12"
 dependencies = [
     "kubernetes>=29.0.0",
