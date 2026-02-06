@@ -20,8 +20,8 @@ It bridges the gap between static YAML manifests and your live cluster state, en
 
 ### From TestPyPI (Current Release)
 
-[Note]
-⚠️ Since this is a TestPyPI release, please use the installation command below to ensure all dependencies (PyYAML, Typer, etc.) are pulled correctly from the main PyPI registry
+⚠️ Note: Since this is a TestPyPI release, please use the installation command below to ensure all dependencies (PyYAML, Typer, etc.) are pulled correctly from the main PyPI registry:
+
 
 ```bash
 pip install --no-cache-dir --index-url https://test.pypi.org/simple/ --extra-index-url https://pypi.org/simple/ kuberef
