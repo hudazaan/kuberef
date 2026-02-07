@@ -1,5 +1,6 @@
 # Kuberef
-![PyPI - Version](https://img.shields.io/badge/TestPyPI-v0.1.9-blue)
+![PyPI - Version](https://img.shields.io/pypi/v/kuberef?color=blue)
+![Python Version](https://img.shields.io/pypi/pyversions/kuberef)
 ![CI Status](https://github.com/hudazaan/kuberef/actions/workflows/ci.yaml/badge.svg)
 
 **Kuberef** is a lightweight, cloud-native CLI tool designed to validate Kubernetes Secret references before you deploy. It bridges the gap between static YAML manifests and your live cluster state, preventing "silent failures" caused by missing secrets or incorrect data keys.
@@ -26,13 +27,12 @@
 
 ## Installation
 
-### From TestPyPI (Current Release)
+### From PyPI (Recommended)
 
-⚠️ Note: Since this is a TestPyPI release, please use the installation command below to ensure all dependencies (PyYAML, Typer, etc.) are pulled correctly from the main PyPI registry:
-
+Install the tool globally using pip:
 
 ```bash
-pip install --no-cache-dir --index-url https://test.pypi.org/simple/ --extra-index-url https://pypi.org/simple/ kuberef
+pip install kuberef
 ```
 
 ### From Source (Development)
@@ -48,21 +48,22 @@ poetry run kuberef path/to/your/k8s-manifest.yaml
 
 ### Using Docker (Containerized)
 
-If you don't want to install Python locally, you can run Kuberef as a container. You must mount your local `kubeconfig` and the directory containing your manifests:
+If you don't want to install Python locally, you can run Kuberef as a container. You must mount your local `kubeconfig` and the directory containing your manifests.
+
+Build the image locally:
 
 ```bash
-git clone https://github.com/hudazaan/kuberef.git
-cd kuberef
+docker build -t kuberef https://github.com/hudazaan/kuberef.git
+```
 
-# Build Image 
-docker build -t kuberef .
+Run the audit: 
 
-# Run the audit 
-docker run -it --rm \
-  --network="host" \
-  -v ~/.kube/config:/root/.kube/config \
-  -v $(pwd):/app \
-  kuberef /app/test-manifests --namespace default
+```bash
+# Linux / macOS (zsh, bash)
+docker run -it --rm --network="host" -v ~/.kube/config:/root/.kube/config -v "$(pwd):/app" kuberef /app
+
+# Windows (PowerShell)
+docker run -it --rm --network="host" -v "${HOME}/.kube/config:/root/.kube/config" -v "C:/PATH/TO/YOUR/MANIFESTS:/app" kuberef /app
 ```
 
 Verification Commands (For Debugging): 
