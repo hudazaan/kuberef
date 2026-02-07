@@ -7,6 +7,7 @@
 
 ---
 
+
 ## Features
 
 - **Batch & Recursive Spec Discovery**: Automatically scans single files or entire directories for Kubernetes resources including `Deployments`, `StatefulSets`, `Jobs`, and `CronJobs` to find nested Pod specifications.
