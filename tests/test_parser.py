@@ -1,36 +1,30 @@
-from kuberef.main import get_required_secrets
-import pathlib
+import pytest
+from kuberef.main import get_secret_refs
 
-def test_extract_secrets_valid_yaml(tmp_path):
-    d = tmp_path / "test.yaml"
-    content = """
-apiVersion: apps/v1
-kind: Deployment
-spec:
-  template:
-    spec:
-      containers:
-      - name: web
-        env:
-        - valueFrom:
-            secretKeyRef:
-              name: my-secret
-    """
-    d.write_text(content)
-    
-    results = get_required_secrets(str(d))
-    assert "my-secret" in results
+def test_recursive_discovery():
+    """Test that secrets are found deep inside nested structures (like a Deployment)."""
+    manifest = {
+        "kind": "Deployment",
+        "spec": {
+            "template": {
+                "spec": {
+                    "containers": [{
+                        "name": "app",
+                        "env": [{
+                            "name": "DB_PASS",
+                            "valueFrom": {"secretKeyRef": {"name": "db-secret", "key": "password"}}
+                        }]
+                    }]
+                }
+            }
+        }
+    }
+    refs = get_secret_refs(manifest)
+    assert "db-secret" in refs
+    assert "password" in refs["db-secret"]
 
-def test_extract_secrets_empty_file(tmp_path):
-    d = tmp_path / "empty.yaml"
-    d.write_text("")
-    
-    results = get_required_secrets(str(d))
-    assert results == []
-
-def test_extract_secrets_invalid_yaml(tmp_path):
-    d = tmp_path / "broken.txt"
-    d.write_text("this is not yaml : [")
-    
-    results = get_required_secrets(str(d))
-    assert results == []
+def test_empty_manifest():
+    """Ensure the tool doesn't crash on empty or non-k8s YAML."""
+    manifest = {"random": "data"}
+    refs = get_secret_refs(manifest)
+    assert refs == {}

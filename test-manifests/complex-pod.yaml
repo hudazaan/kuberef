@@ -1,0 +1,23 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: discovery-test
+spec:
+  imagePullSecrets:
+    - name: registry-creds  # 1. Should be caught
+  containers:
+  - name: app
+    image: nginx
+    env:
+      - name: DB_PASS
+        valueFrom:
+          secretKeyRef:
+            name: db-secret  # 2. Should be caught
+            key: password
+    envFrom:
+      - secretRef:
+          name: api-keys     # 3. Should be caught
+  volumes:
+    - name: certs
+      secret:
+        secretName: ssl-certs # 4. Should be caught
