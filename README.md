@@ -1,5 +1,5 @@
 # Kuberef
-![PyPI - Version](https://img.shields.io/badge/TestPyPI-v0.1.5-blue)
+![PyPI - Version](https://img.shields.io/badge/TestPyPI-v0.1.9-blue)
 ![CI Status](https://github.com/hudazaan/kuberef/actions/workflows/ci.yaml/badge.svg)
 
 **Kuberef** is a lightweight, cloud-native CLI tool designed to validate Kubernetes Secret references before you deploy. It bridges the gap between static YAML manifests and your live cluster state, preventing "silent failures" caused by missing secrets or incorrect data keys.
@@ -51,12 +51,28 @@ poetry run kuberef path/to/your/k8s-manifest.yaml
 If you don't want to install Python locally, you can run Kuberef as a container. You must mount your local `kubeconfig` and the directory containing your manifests:
 
 ```bash
+git clone https://github.com/hudazaan/kuberef.git
+cd kuberef
+
+# Build Image 
 docker build -t kuberef .
 
+# Run the audit 
 docker run -it --rm \
+  --network="host" \
   -v ~/.kube/config:/root/.kube/config \
   -v $(pwd):/app \
   kuberef /app/test-manifests --namespace default
+```
+
+Verification Commands (For Debugging): 
+
+```
+# Inspect package
+pip show kuberef
+
+# Run as a module
+python -m kuberef --help
 ```
 
 ---
@@ -85,19 +101,6 @@ General Syntax to add path to your Kubernetes manifest:
 
 ```bash
 kuberef <YOUR_FILE>.yaml --namespace <YOUR_NAMESPACE>
-```
-
-Verification Commands (For Debugging): 
-
-```
-# Check version
-kuberef --version
-
-# Run as a module
-python -m kuberef --help
-
-# Inspect package
-pip show kuberef
 ```
 
 **Example Output**: 
