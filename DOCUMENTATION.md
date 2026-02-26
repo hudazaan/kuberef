@@ -36,7 +36,7 @@ It features a Recursive Discovery Engine using PyYAML which parses deep-nested s
 1. **Recursive Spec Discovery:** Kubernetes manifests are deeply nested. A Secret might be in a Pod, a Deployment, or a CronJob. Finding every reference without crashing on missing keys was a major logic hurdle.
 2. **K8s API Authentication:** Ensuring the tool could use the host's existing cluster credentials inside an isolated Docker container required complex network bridging and volume mapping. 
 
-**Example Output**: 
+# Example Output: 
 ![Audit](./docs/images/audit-kuberef.png)
 
 ________________________
