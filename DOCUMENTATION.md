@@ -1,17 +1,17 @@
 # Kuberef | Kubernetes Secret Reference Validator
 
-**Role:** Developer & Maintainer   |   
-**Status:** Published & Actively Maintained   |   
+**Role:** Developer & Maintainer   
+**Status:** Published & Actively Maintained  
 **Tech Stack:** Python, Kubernetes API, Docker, GitHub Actions, Poetry, Typer, Rich, PyYAML, PyPI   
 
-A production-grade pre-deployment validation tool built to eliminate CreateContainerConfigError by auditing Kubernetes secrets against live cluster states. Developed using Python, Typer, and Rich for the CLI interface, PyYAML for manifest parsing, Poetry for package management, and published to PyPI.
-It features a Recursive Discovery Engine using PyYAML which parses deep-nested specs in multi-document YAMLs, performing checks via live Kubernetes API. Optimized for enterprise DevOps workflows with a multi-stage Docker build for cross-platform compatibility, a GitHub Actions CI/CD pipeline for automated testing, serving as a high-fidelity "Shift-Left" validation gate that significantly reduces debugging time in infrastructure misconfigurations.
+A pre-deployment validation tool built to eliminate CreateContainerConfigError by auditing Kubernetes secrets against live cluster states. Developed using Python, Typer and Rich for the CLI interface, PyYAML for manifest parsing, Poetry for package management, and published to PyPI for package distribution.
+It features a Recursive Discovery Engine using PyYAML which parses deep-nested specs in multi-document YAMLs, performing checks via live Kubernetes API. Optimized for DevOps workflows with a multi-stage Docker build for cross-platform compatibility, a GitHub Actions CI/CD pipeline for automated testing, serving as a "Shift-Left" validation gate that reduces debugging time in infrastructure misconfigurations.
 
 - **Problem:** I noticed a recurring issue in Kubernetes deployments where kubectl apply would succeed, but the containers would crash later and pods were stuck in CreateContainerConfigError due to referencing of a secret that doesn't exist or has the wrong key name. Kubernetes doesn't check these references until the container tries to start. That's because Kubernetes validates YAML syntax but doesn't check if secrets actually exist until the start of container. Thus, there's a gap between deployment time and runtime validation
 
 - **Solution:** Built Kuberef to close this gap by implementing a pre-flight validation CLI in Python that queries the live K8s API to audit every Secret reference before deployment. I had to handle four different reference patterns (env, envFrom, volumes, and imagePullSecrets) and ensure it worked across directories. 
 
-- **The Impact:** The tool is now published on PyPI and can be locally installed using `pip install kuberef`. It shifts error detection to the left—catching misconfigurations in the CI pipeline instead of in Production. It effectively reduces debugging time for Secret-related issues since they never reach the cluster.
+- **The Impact:** The tool is now published on PyPI and can be locally installed using `pip install kuberef`. It shifts error detection to the left—catching misconfigurations in the CI pipeline instead of in Production. It potentially reduces debugging time for Secret-related issues since they never reach the cluster.
 
 # Technical Highlights:
 1. **Recursive Discovery:** Traverses nested YAML (Deployments, CronJobs) to find all Secret references regardless of spec depth.
@@ -36,6 +36,8 @@ It features a Recursive Discovery Engine using PyYAML which parses deep-nested s
 1. **Recursive Spec Discovery:** Kubernetes manifests are deeply nested. A Secret might be in a Pod, a Deployment, or a CronJob. Finding every reference without crashing on missing keys was a major logic hurdle.
 2. **K8s API Authentication:** Ensuring the tool could use the host's existing cluster credentials inside an isolated Docker container required complex network bridging and volume mapping. 
 
+**Example Output**: 
+![Audit](./docs/images/audit-kuberef.png)
 
 ________________________
 
