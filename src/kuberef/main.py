@@ -92,47 +92,52 @@ def audit(
     for yaml_file in files_to_scan:
         with open(yaml_file, "r") as f:
             try:
-                docs = yaml.safe_load_all(f)
-                combined_refs = {}
-                for doc in docs:
-                    if not doc: continue
-                    for name, keys in get_secret_refs(doc).items():
-                        combined_refs.setdefault(name, set()).update(keys)
+                docs = list(yaml.safe_load_all(f))
             except yaml.YAMLError:
                 console.print(f"[bold red]Error:[/bold red] Invalid YAML format in {yaml_file.name}. Skipping...")
                 continue
 
-        if not combined_refs:
-            continue
+        for doc in docs:
+            if not doc: continue
+            
+            refs = get_secret_refs(doc)
+            if not refs:
+                continue
 
-        table = Table(title=f"Security Audit: {yaml_file.name}")
-        table.add_column("Secret Name", style="cyan")
-        table.add_column("Status", justify="left")
+            kind = doc.get("kind", "UnknownResource")
+            metadata = doc.get("metadata", {})
+            resource_name = metadata.get("name", "unknown-name")
 
-        for name, keys in combined_refs.items():
-            try:
-                secret = v1.read_namespaced_secret(name, namespace)
-                if keys:
-                    existing_keys = (secret.data or {}).keys()
-                    missing = [k for k in keys if k not in existing_keys]
-                    if missing:
-                        table.add_row(name, f"[bold yellow]KEY MISSING: {', '.join(missing)}[/bold yellow]")
-                        global_warnings += 1
+            table = Table(title=f"Security Audit: {yaml_file.name} ➔ {kind}/{resource_name}")
+            table.add_column("Secret Name", style="cyan")
+            table.add_column("Status", justify="left")
+
+            for name, keys in refs.items():
+                try:
+                    if v1 is None:
+                        raise ApiException(status=404, reason="Not Found")
+                    secret = v1.read_namespaced_secret(name, namespace)
+                    if keys:
+                        existing_keys = (secret.data or {}).keys()
+                        missing = [k for k in keys if k not in existing_keys]
+                        if missing:
+                            table.add_row(name, f"[bold yellow]KEY MISSING: {', '.join(missing)}[/bold yellow]")
+                            global_warnings += 1
+                        else:
+                            table.add_row(name, "[bold green]PASS[/bold green]")
+                            global_passed += 1
                     else:
-                        table.add_row(name, "[bold green]PASS[/bold green]")
+                        table.add_row(name, "[bold green]PASS (Found)[/bold green]")
                         global_passed += 1
-                else:
-                    table.add_row(name, "[bold green]PASS (Found)[/bold green]")
-                    global_passed += 1
-            except ApiException as e:
-                if e.status == 404:
-                    table.add_row(name, "[bold red]FAIL (Secret Missing)[/bold red]")
-                    global_failed += 1
-                else:
-                    table.add_row(name, f"[dim]Error {e.status}[/dim]")
-                    global_failed += 1
-        
-        console.print(table)
+                except ApiException as e:
+                    if e.status == 404:
+                        table.add_row(name, "[bold red]FAIL (Secret Missing)[/bold red]")
+                        global_failed += 1
+                    else:
+                        table.add_row(name, f"[dim]Error {e.status}[/dim]")
+                        global_failed += 1
+            
+            console.print(table)
 
     console.print("\n" + "━" * 30)
     console.print("[bold underline]AUDIT SUMMARY[/bold underline]\n")
