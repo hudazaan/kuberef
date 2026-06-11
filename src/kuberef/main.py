@@ -1,5 +1,6 @@
 import typer
 import yaml
+import json
 from pathlib import Path
 from typing import List, Dict, Any, Set
 from rich.console import Console
@@ -57,39 +58,52 @@ def get_secret_refs(data: Dict[str, Any]) -> Dict[str, Set[str]]:
 @app.command()
 def audit(
     path_str: str = typer.Argument(..., help="Path to K8s YAML file or directory"),
-    namespace: str = typer.Option("default", "--namespace", "-n")
+    namespace: str = typer.Option("default", "--namespace", "-n"),
+    json_output: bool = typer.Option(False, "--json", "-o", help="Output results as JSON")
 ):
     """Deep audit: Checks files or directories against Cluster, Namespace, and Secret keys."""
     target_path = Path(path_str)
 
     files_to_scan = []
     if target_path.is_dir():
-
         files_to_scan = list(target_path.glob("*.yaml")) + list(target_path.glob("*.yml"))
     elif target_path.is_file():
         files_to_scan = [target_path]
     else:
-        console.print(f"[bold red]Error:[/bold red] Path {path_str} not found!")
+        if json_output:
+            print(json.dumps({"error": f"Path {path_str} not found!"}))
+        else:
+            console.print(f"[bold red]Error:[/bold red] Path {path_str} not found!")
         raise typer.Exit(1)
 
     if not files_to_scan:
-        console.print(f"[yellow]No YAML files found at {path_str}[/yellow]")
+        if json_output:
+            print(json.dumps({"error": f"No YAML files found at {path_str}"}))
+        else:
+            console.print(f"[yellow]No YAML files found at {path_str}[/yellow]")
         return
 
+    cluster_name = ""
     try:
         config.load_kube_config()
         _, active_context = config.list_kube_config_contexts()
         cluster_name = active_context['name']
         v1 = client.CoreV1Api()
         v1.read_namespace(name=namespace)
-        console.print(f"[bold blue]Target Cluster:[/bold blue] {cluster_name}")
+        if not json_output:
+            console.print(f"[bold blue]Target Cluster:[/bold blue] {cluster_name}")
     except Exception as e:
-        console.print(f"[bold red]Pre-flight Error:[/bold red] {str(e)}")
+        if json_output:
+            print(json.dumps({"error": f"Pre-flight Error: {str(e)}"}))
+        else:
+            console.print(f"[bold red]Pre-flight Error:[/bold red] {str(e)}")
         raise typer.Exit(1)
 
     global_passed, global_failed, global_warnings = 0, 0, 0
+    file_results = []
 
     for yaml_file in files_to_scan:
+        file_result = {"file": str(yaml_file.name), "secrets": []}
         with open(yaml_file, "r") as f:
             try:
                 docs = yaml.safe_load_all(f)
@@ -99,48 +113,82 @@ def audit(
                     for name, keys in get_secret_refs(doc).items():
                         combined_refs.setdefault(name, set()).update(keys)
             except yaml.YAMLError:
-                console.print(f"[bold red]Error:[/bold red] Invalid YAML format in {yaml_file.name}. Skipping...")
+                if json_output:
+                    file_result["error"] = "Invalid YAML format"
+                else:
+                    console.print(f"[bold red]Error:[/bold red] Invalid YAML format in {yaml_file.name}. Skipping...")
+                file_results.append(file_result)
                 continue
 
         if not combined_refs:
+            file_results.append(file_result)
             continue
 
-        table = Table(title=f"Security Audit: {yaml_file.name}")
-        table.add_column("Secret Name", style="cyan")
-        table.add_column("Status", justify="left")
+        if not json_output:
+            table = Table(title=f"Security Audit: {yaml_file.name}")
+            table.add_column("Secret Name", style="cyan")
+            table.add_column("Status", justify="left")
 
         for name, keys in combined_refs.items():
+            secret_result = {"name": name, "keys": list(keys), "status": ""}
             try:
                 secret = v1.read_namespaced_secret(name, namespace)
                 if keys:
                     existing_keys = (secret.data or {}).keys()
                     missing = [k for k in keys if k not in existing_keys]
                     if missing:
-                        table.add_row(name, f"[bold yellow]KEY MISSING: {', '.join(missing)}[/bold yellow]")
+                        secret_result["status"] = "KEY_MISSING"
+                        secret_result["missing_keys"] = missing
                         global_warnings += 1
+                        if not json_output:
+                            table.add_row(name, f"[bold yellow]KEY MISSING: {', '.join(missing)}[/bold yellow]")
                     else:
-                        table.add_row(name, "[bold green]PASS[/bold green]")
+                        secret_result["status"] = "PASS"
                         global_passed += 1
+                        if not json_output:
+                            table.add_row(name, "[bold green]PASS[/bold green]")
                 else:
-                    table.add_row(name, "[bold green]PASS (Found)[/bold green]")
+                    secret_result["status"] = "PASS"
                     global_passed += 1
+                    if not json_output:
+                        table.add_row(name, "[bold green]PASS (Found)[/bold green]")
             except ApiException as e:
                 if e.status == 404:
-                    table.add_row(name, "[bold red]FAIL (Secret Missing)[/bold red]")
+                    secret_result["status"] = "SECRET_MISSING"
                     global_failed += 1
+                    if not json_output:
+                        table.add_row(name, "[bold red]FAIL (Secret Missing)[/bold red]")
                 else:
-                    table.add_row(name, f"[dim]Error {e.status}[/dim]")
+                    secret_result["status"] = f"ERROR_{e.status}"
                     global_failed += 1
+                    if not json_output:
+                        table.add_row(name, f"[dim]Error {e.status}[/dim]")
+            file_result["secrets"].append(secret_result)
         
-        console.print(table)
+        if not json_output:
+            console.print(table)
+        file_results.append(file_result)
 
-    console.print("\n" + "━" * 30)
-    console.print("[bold underline]AUDIT SUMMARY[/bold underline]\n")
-    console.print(f"📂 Files Scanned: {len(files_to_scan)}")
-    console.print(f"✅ Total Passed:   [green]{global_passed}[/green]")
-    console.print(f"❌ Total Failed:   [red]{global_failed}[/red]")
-    console.print(f"⚠️ Total Warnings: [yellow]{global_warnings}[/yellow]")
-    console.print("━" * 30 + "\n")
+    summary = {
+        "files_scanned": len(files_to_scan),
+        "total_passed": global_passed,
+        "total_failed": global_failed,
+        "total_warnings": global_warnings,
+        "cluster": cluster_name,
+        "namespace": namespace,
+        "files": file_results
+    }
+
+    if json_output:
+        print(json.dumps(summary))
+    else:
+        console.print("\n" + "━" * 30)
+        console.print("[bold underline]AUDIT SUMMARY[/bold underline]\n")
+        console.print(f"📂 Files Scanned: {len(files_to_scan)}")
+        console.print(f"✅ Total Passed:   [green]{global_passed}[/green]")
+        console.print(f"❌ Total Failed:   [red]{global_failed}[/red]")
+        console.print(f"⚠️ Total Warnings: [yellow]{global_warnings}[/yellow]")
+        console.print("━" * 30 + "\n")
 
     if global_failed > 0 or global_warnings > 0:
         raise typer.Exit(code=1)
