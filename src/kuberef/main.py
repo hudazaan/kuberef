@@ -64,12 +64,9 @@ Deep audit: Checks files or directories against Cluster, Namespace,
 and Secret keys.
 
 Examples:
-
-  kuberef deployment.yaml
-      Scan a single manifest file
-
-  kuberef ./k8s-manifests/
-      Scan an entire directory
+  kuberef deployment.yaml  # Scan a single manifest file
+  kuberef ./k8s-manifests/ # Scan an entire directory
+ 
 """
     
     
