@@ -75,7 +75,7 @@ Examples:
     files_to_scan = []
     if target_path.is_dir():
 
-        files_to_scan = list(target_path.glob("*.yaml")) + list(target_path.glob("*.yml"))
+        files_to_scan = list(target_path.rglob("*.yaml")) + list(target_path.rglob("*.yml"))       
     elif target_path.is_file():
         files_to_scan = [target_path]
     else:
