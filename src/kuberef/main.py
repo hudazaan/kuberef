@@ -61,7 +61,17 @@ def audit(
     namespace: str = typer.Option("default", "--namespace", "-n"),
     json_output: bool = typer.Option(False, "--json", "-o", help="Output results as JSON")
 ):
-    """Deep audit: Checks files or directories against Cluster, Namespace, and Secret keys."""
+    """
+Deep audit: Checks files or directories against Cluster, Namespace,
+and Secret keys.
+
+Examples:
+  kuberef deployment.yaml  # Scan a single manifest file
+  kuberef ./k8s-manifests/ # Scan an entire directory
+ 
+"""
+    
+    
     target_path = Path(path_str)
 
     files_to_scan = []
