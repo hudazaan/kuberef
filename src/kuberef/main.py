@@ -59,13 +59,23 @@ def audit(
     path_str: str = typer.Argument(..., help="Path to K8s YAML file or directory"),
     namespace: str = typer.Option("default", "--namespace", "-n")
 ):
-    """Deep audit: Checks files or directories against Cluster, Namespace, and Secret keys."""
+    """
+Deep audit: Checks files or directories against Cluster, Namespace,
+and Secret keys.
+
+Examples:
+  kuberef deployment.yaml  # Scan a single manifest file
+  kuberef ./k8s-manifests/ # Scan an entire directory
+ 
+"""
+    
+    
     target_path = Path(path_str)
 
     files_to_scan = []
     if target_path.is_dir():
 
-        files_to_scan = list(target_path.glob("*.yaml")) + list(target_path.glob("*.yml"))
+        files_to_scan = list(target_path.rglob("*.yaml")) + list(target_path.rglob("*.yml"))       
     elif target_path.is_file():
         files_to_scan = [target_path]
     else:
