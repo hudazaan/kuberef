@@ -23,8 +23,8 @@ def find_pod_specs(data: Any) -> List[Dict[str, Any]]:
             specs.extend(find_pod_specs(item))
     return specs
 
-def get_secret_refs(data: Dict[str, Any]) -> Dict[str, Set[str]]:
-    """Maps secret names to the specific keys they need to provide."""
+def get_secret_refs(pod_specs: List[Dict[str, Any]]) -> Dict[str, Set[str]]:
+    """Maps secret names to the specific keys they need to provide from Pod specs."""
     all_refs = {}
 
     def add_ref(name: str, key: str = None):
@@ -34,7 +34,7 @@ def get_secret_refs(data: Dict[str, Any]) -> Dict[str, Set[str]]:
         if key:
             all_refs[name].add(key)
 
-    for spec in find_pod_specs(data):
+    for spec in pod_specs:
         containers = spec.get("containers", []) + spec.get("initContainers", [])
         for c in containers:
             for env in c.get("env", []):
@@ -53,6 +53,27 @@ def get_secret_refs(data: Dict[str, Any]) -> Dict[str, Set[str]]:
             add_ref(ps.get("name"))
 
     return all_refs
+
+def preprocess_manifest(doc: Any) -> Dict[str, Any]:
+    """Dynamically scans incoming resource schemas and extracts the Pod specification."""
+    if not isinstance(doc, dict):
+        return None
+    return {
+        "kind": doc.get("kind", "UnknownResource"),
+        "name": doc.get("metadata", {}).get("name", "unknown-name"),
+        "pod_specs": find_pod_specs(doc),
+        "raw_doc": doc
+    }
+
+def preprocess_manifests(docs: List[Any]) -> List[Dict[str, Any]]:
+    """Transforms raw YAML documents into normalized manifests with extracted pod specs."""
+    processed = []
+    for doc in docs:
+        if doc:
+            p_doc = preprocess_manifest(doc)
+            if p_doc and p_doc["pod_specs"]:
+                processed.append(p_doc)
+    return processed
 
 @app.command()
 def audit(
@@ -94,7 +115,7 @@ Examples:
         v1.read_namespace(name=namespace)
         console.print(f"[bold blue]Target Cluster:[/bold blue] {cluster_name}")
     except Exception as e:
-        console.print(f"[bold red]Pre-flight Error:[/bold red] {str(e)}")
+        console.print(f"[bold red]Pre-Flight Error:[/bold red] {str(e)}")
         raise typer.Exit(1)
 
     global_passed, global_failed, global_warnings = 0, 0, 0
@@ -102,15 +123,23 @@ Examples:
     for yaml_file in files_to_scan:
         with open(yaml_file, "r") as f:
             try:
-                docs = yaml.safe_load_all(f)
-                combined_refs = {}
-                for doc in docs:
-                    if not doc: continue
-                    for name, keys in get_secret_refs(doc).items():
-                        combined_refs.setdefault(name, set()).update(keys)
+                docs = list(yaml.safe_load_all(f))
             except yaml.YAMLError:
                 console.print(f"[bold red]Error:[/bold red] Invalid YAML format in {yaml_file.name}. Skipping...")
                 continue
+
+        processed_docs = preprocess_manifests(docs)
+        if not processed_docs:
+            continue
+
+        combined_refs = {}
+        secret_resources = {}
+        for p_doc in processed_docs:
+            refs = get_secret_refs(p_doc["pod_specs"])
+            kind_name = f'{p_doc["kind"]}/{p_doc["name"]}'
+            for name, keys in refs.items():
+                combined_refs.setdefault(name, set()).update(keys)
+                secret_resources.setdefault(name, set()).add(kind_name)
 
         if not combined_refs:
             continue
@@ -118,28 +147,30 @@ Examples:
         table = Table(title=f"Security Audit: {yaml_file.name}")
         table.add_column("Secret Name", style="cyan")
         table.add_column("Status", justify="left")
+        table.add_column("Found In", style="dim")
 
         for name, keys in combined_refs.items():
+            resources_str = ", ".join(sorted(secret_resources.get(name, set())))
             try:
                 secret = v1.read_namespaced_secret(name, namespace)
                 if keys:
                     existing_keys = (secret.data or {}).keys()
                     missing = [k for k in keys if k not in existing_keys]
                     if missing:
-                        table.add_row(name, f"[bold yellow]KEY MISSING: {', '.join(missing)}[/bold yellow]")
+                        table.add_row(name, f"[bold yellow]KEY MISSING: {', '.join(missing)}[/bold yellow]", resources_str)
                         global_warnings += 1
                     else:
-                        table.add_row(name, "[bold green]PASS[/bold green]")
+                        table.add_row(name, "[bold green]PASS[/bold green]", resources_str)
                         global_passed += 1
                 else:
-                    table.add_row(name, "[bold green]PASS (Found)[/bold green]")
+                    table.add_row(name, "[bold green]PASS (Found)[/bold green]", resources_str)
                     global_passed += 1
             except ApiException as e:
                 if e.status == 404:
-                    table.add_row(name, "[bold red]FAIL (Secret Missing)[/bold red]")
+                    table.add_row(name, "[bold red]FAIL (Secret Missing)[/bold red]", resources_str)
                     global_failed += 1
                 else:
-                    table.add_row(name, f"[dim]Error {e.status}[/dim]")
+                    table.add_row(name, f"[dim]Error {e.status}[/dim]", resources_str)
                     global_failed += 1
         
         console.print(table)
