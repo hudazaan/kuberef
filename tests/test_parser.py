@@ -1,9 +1,11 @@
+import pytest
 from kuberef.main import get_secret_refs
 
 def test_recursive_discovery():
     """Test that secrets are found deep inside nested structures (like a Deployment)."""
     manifest = {
         "kind": "Deployment",
+        "metadata": {"namespace": "prod"},
         "spec": {
             "template": {
                 "spec": {
@@ -19,8 +21,8 @@ def test_recursive_discovery():
         }
     }
     refs = get_secret_refs(manifest)
-    assert "db-secret" in refs
-    assert "password" in refs["db-secret"]
+    assert ("db-secret", "prod") in refs
+    assert "password" in refs[("db-secret", "prod")]
 
 def test_empty_manifest():
     """Ensure the tool doesn't crash on empty or non-k8s YAML."""
@@ -29,13 +31,15 @@ def test_empty_manifest():
     assert refs == {}
 
 def test_multi_document_parsing():
-    """Ensure secrets are discovered across multiple YAML documents."""
+    """Ensure secrets are discovered across multiple YAML documents with different namespaces."""
 
     import yaml
 
     multi_doc_yaml = """
 ---
 kind: Deployment
+metadata:
+  namespace: prod
 spec:
   template:
     spec:
@@ -50,6 +54,8 @@ spec:
 
 ---
 kind: Pod
+metadata:
+  namespace: dev
 spec:
   containers:
   - name: worker
@@ -69,14 +75,14 @@ spec:
         if not doc:
             continue
 
-        for name, keys in get_secret_refs(doc).items():
-            combined_refs.setdefault(name, set()).update(keys)
+        for (name, ns), keys in get_secret_refs(doc).items():
+            combined_refs.setdefault((name, ns), set()).update(keys)
 
-    assert "db-secret" in combined_refs
-    assert "password" in combined_refs["db-secret"]
+    assert ("db-secret", "prod") in combined_refs
+    assert "password" in combined_refs[("db-secret", "prod")]
 
-    assert "api-secret" in combined_refs
-    assert "token" in combined_refs["api-secret"]
+    assert ("api-secret", "dev") in combined_refs
+    assert "token" in combined_refs[("api-secret", "dev")]
 
 def test_invalid_yaml_handling():
     """Test that the audit command gracefully handles malformed YAML files without crashing."""
@@ -125,4 +131,4 @@ def test_invalid_yaml_handling():
         assert result.exit_code in (0, 1)
         # It should contain a clear error/warning message about malformed-pod.yaml.
         assert "Invalid YAML" in result.output
-        assert "malformed-pod.yaml" in result.output
+        assert "malformed-pod.yaml" in result.output

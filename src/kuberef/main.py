@@ -10,47 +10,52 @@ from kubernetes.client.rest import ApiException
 app = typer.Typer()
 console = Console()
 
-def find_pod_specs(data: Any) -> List[Dict[str, Any]]:
-    """Recursively finds all Pod 'spec' blocks (handles Deployments, Jobs, etc.)."""
+def find_pod_specs(data: Any, current_ns: str = None) -> List[tuple[str | None, Dict[str, Any]]]:
+    """Recursively finds all Pod 'spec' blocks with their associated namespace."""
     specs = []
     if isinstance(data, dict):
+        # Update namespace if present in this block (e.g., top-level or in a List)
+        ns = data.get("metadata", {}).get("namespace", current_ns)
+        
         if "containers" in data and isinstance(data["containers"], list):
-            specs.append(data)
+            specs.append((ns, data))
+        
         for value in data.values():
-            specs.extend(find_pod_specs(value))
+            specs.extend(find_pod_specs(value, ns))
     elif isinstance(data, list):
         for item in data:
-            specs.extend(find_pod_specs(item))
+            specs.extend(find_pod_specs(item, current_ns))
     return specs
 
-def get_secret_refs(data: Dict[str, Any]) -> Dict[str, Set[str]]:
-    """Maps secret names to the specific keys they need to provide."""
+def get_secret_refs(data: Dict[str, Any]) -> Dict[tuple[str, str | None], Set[str]]:
+    """Maps (secret_name, namespace) to the specific keys they need to provide."""
     all_refs = {}
 
-    def add_ref(name: str, key: str = None):
+    def add_ref(name: str, ns: str | None, key: str = None):
         if not name: return
-        if name not in all_refs:
-            all_refs[name] = set()
+        ref_key = (name, ns)
+        if ref_key not in all_refs:
+            all_refs[ref_key] = set()
         if key:
-            all_refs[name].add(key)
+            all_refs[ref_key].add(key)
 
-    for spec in find_pod_specs(data):
+    for ns, spec in find_pod_specs(data):
         containers = spec.get("containers", []) + spec.get("initContainers", [])
         for c in containers:
             for env in c.get("env", []):
                 if "valueFrom" in env and "secretKeyRef" in env["valueFrom"]:
                     ref = env["valueFrom"]["secretKeyRef"]
-                    add_ref(ref.get("name"), ref.get("key"))
+                    add_ref(ref.get("name"), ns, ref.get("key"))
             for ef in c.get("envFrom", []):
                 if "secretRef" in ef:
-                    add_ref(ef["secretRef"].get("name"))
+                    add_ref(ef["secretRef"].get("name"), ns)
 
         for vol in spec.get("volumes", []):
             if "secret" in vol:
-                add_ref(vol.get("secret", {}).get("secretName"))
+                add_ref(vol.get("secret", {}).get("secretName"), ns)
 
         for ps in spec.get("imagePullSecrets", []):
-            add_ref(ps.get("name"))
+            add_ref(ps.get("name"), ns)
 
     return all_refs
 
@@ -106,8 +111,9 @@ Examples:
                 combined_refs = {}
                 for doc in docs:
                     if not doc: continue
-                    for name, keys in get_secret_refs(doc).items():
-                        combined_refs.setdefault(name, set()).update(keys)
+                    for (name, ns), keys in get_secret_refs(doc).items():
+                        resolved_ns = ns or namespace
+                        combined_refs.setdefault((name, resolved_ns), set()).update(keys)
             except yaml.YAMLError:
                 console.print(f"[bold red]Error:[/bold red] Invalid YAML format in {yaml_file.name}. Skipping...")
                 continue
@@ -116,30 +122,32 @@ Examples:
             continue
 
         table = Table(title=f"Security Audit: {yaml_file.name}")
-        table.add_column("Secret Name", style="cyan")
+        table.add_column("Secret (Namespace)", style="cyan")
         table.add_column("Status", justify="left")
 
-        for name, keys in combined_refs.items():
+        for (name, ns), keys in combined_refs.items():
             try:
-                secret = v1.read_namespaced_secret(name, namespace)
+                secret = v1.read_namespaced_secret(name, ns)
+                display_name = f"{name} ({ns})"
                 if keys:
                     existing_keys = (secret.data or {}).keys()
                     missing = [k for k in keys if k not in existing_keys]
                     if missing:
-                        table.add_row(name, f"[bold yellow]KEY MISSING: {', '.join(missing)}[/bold yellow]")
+                        table.add_row(display_name, f"[bold yellow]KEY MISSING: {', '.join(missing)}[/bold yellow]")
                         global_warnings += 1
                     else:
-                        table.add_row(name, "[bold green]PASS[/bold green]")
+                        table.add_row(display_name, "[bold green]PASS[/bold green]")
                         global_passed += 1
                 else:
-                    table.add_row(name, "[bold green]PASS (Found)[/bold green]")
+                    table.add_row(display_name, "[bold green]PASS (Found)[/bold green]")
                     global_passed += 1
             except ApiException as e:
+                display_name = f"{name} ({ns})"
                 if e.status == 404:
-                    table.add_row(name, "[bold red]FAIL (Secret Missing)[/bold red]")
+                    table.add_row(display_name, "[bold red]FAIL (Secret Missing)[/bold red]")
                     global_failed += 1
                 else:
-                    table.add_row(name, f"[dim]Error {e.status}[/dim]")
+                    table.add_row(display_name, f"[dim]Error {e.status}[/dim]")
                     global_failed += 1
         
         console.print(table)
