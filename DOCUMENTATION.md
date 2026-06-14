@@ -105,6 +105,31 @@ imagePullSecrets:
 1. **Recursive Spec Discovery:** Kubernetes manifests are deeply nested. A Secret might be in a Pod, a Deployment, or a CronJob. Finding every reference without crashing on missing keys was a major logic hurdle.
 2. **K8s API Authentication:** Ensuring the tool could use the host's existing cluster credentials inside an isolated Docker container required complex network bridging and volume mapping. 
 
+## Using kuberef as a kubectl plugin
+
+Once installed, kuberef can be invoked as `kubectl ref` since Kubernetes
+automatically discovers any executable named `kubectl-<name>` in your `$PATH`.
+
+### Local development setup
+
+1. Install kuberef in editable mode:
+pip install -e .
+2. Verify `kubectl-ref` is available in your PATH:
+where kubectl-ref      # Windows
+which kubectl-ref      # macOS/Linux
+3. Test the plugin directly:
+kubectl-ref --help
+4. If `kubectl` is installed, it will route automatically:
+kubectl ref --help
+
+kubectl ref deployment.yaml --context dev-cluster --kubeconfig ~/.kube/config
+
+### Context and kubeconfig forwarding
+
+The `audit` command supports `--context` and `--kubeconfig` options, which are
+forwarded to the underlying Kubernetes client configuration:
+kuberef deployment.yaml --context dev-cluster --kubeconfig ~/.kube/config
+
 # Example Output: 
 ![Audit](./docs/images/audit-kuberef.png)
 
