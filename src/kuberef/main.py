@@ -57,8 +57,11 @@ def get_secret_refs(data: Dict[str, Any]) -> Dict[str, Set[str]]:
 @app.command()
 def audit(
     path_str: str = typer.Argument(..., help="Path to K8s YAML file or directory"),
-    namespace: str = typer.Option("default", "--namespace", "-n")
-):
+    namespace: str = typer.Option("default", "--namespace", "-n"),
+    context: str = typer.Option(None, "--context", help="Kubernetes context to use"),
+    kubeconfig: str = typer.Option(None, "--kubeconfig", help="Path to kubeconfig file")
+):    
+
     """
 Deep audit: Checks files or directories against Cluster, Namespace,
 and Secret keys.
@@ -87,7 +90,7 @@ Examples:
         return
 
     try:
-        config.load_kube_config()
+        config.load_kube_config(config_file=kubeconfig, context=context)
         _, active_context = config.list_kube_config_contexts()
         cluster_name = active_context['name']
         v1 = client.CoreV1Api()
