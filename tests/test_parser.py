@@ -172,6 +172,7 @@ def test_github_annotations():
         assert "::error" in result.output
         assert "::warning" in result.output
 
+
 def test_sarif_output():
     """Verify that --format sarif generates a valid results.sarif file."""
     import os
@@ -230,4 +231,46 @@ def test_sarif_output():
             assert "KR002" in rule_ids # MissingSecretKey
         finally:
             if os.path.exists("results.sarif"):
-                os.remove("results.sarif")
+                os.remove("results.sarif")
+
+
+def test_quiet_mode():
+    """Test that the audit command suppresses per-file tables when the quiet option is enabled."""
+    import os
+    from unittest.mock import patch, MagicMock
+    from typer.testing import CliRunner
+    from kuberef.main import app
+
+    runner = CliRunner()
+    
+    with patch("kuberef.main.config.load_kube_config") as mock_load, \
+         patch("kuberef.main.config.list_kube_config_contexts") as mock_contexts, \
+         patch("kuberef.main.client.CoreV1Api") as mock_api_class:
+        
+        mock_contexts.return_value = (None, {"name": "mock-cluster"})
+        mock_api = MagicMock()
+        mock_api_class.return_value = mock_api
+        
+        # Mock read_namespaced_secret
+        def mock_read_secret(name, namespace=None):
+            secret = MagicMock()
+            secret.data = {}
+            return secret
+            
+        mock_api.read_namespaced_secret.side_effect = mock_read_secret
+        
+        test_manifests_dir = os.path.abspath(
+            os.path.join(os.path.dirname(__file__), "..", "test-manifests")
+        )
+        
+        # Test short option -q
+        result_q = runner.invoke(app, [test_manifests_dir, "-q"])
+        assert result_q.exit_code in (0, 1)
+        assert "Security Audit:" not in result_q.output
+        assert "AUDIT SUMMARY" in result_q.output
+        
+        # Test long option --quiet
+        result_quiet = runner.invoke(app, [test_manifests_dir, "--quiet"])
+        assert result_quiet.exit_code in (0, 1)
+        assert "Security Audit:" not in result_quiet.output
+        assert "AUDIT SUMMARY" in result_quiet.output

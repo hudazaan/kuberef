@@ -65,7 +65,8 @@ def get_secret_refs(data: Dict[str, Any]) -> Dict[str, Set[str]]:
 def audit(
     path_str: str = typer.Argument(..., help="Path to K8s YAML file or directory"),
     namespace: str = typer.Option("default", "--namespace", "-n"),
-    format: OutputFormat = typer.Option(OutputFormat.TEXT, "--format", help="Output format (text, github, sarif)")
+    format: OutputFormat = typer.Option(OutputFormat.TEXT, "--format", help="Output format (text, github, sarif)"),
+    quiet: bool = typer.Option(False, "--quiet", "-q", help="Silence per-file status tables and print only the summary"),
 ):
     """
 Deep audit: Checks files or directories against Cluster, Namespace,
@@ -208,7 +209,8 @@ Examples:
                         ]
                     })
         
-        console.print(table)
+        if not quiet:
+            console.print(table)
 
     console.print("\n" + "━" * 30)
     console.print("[bold underline]AUDIT SUMMARY[/bold underline]\n")
