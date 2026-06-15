@@ -28,7 +28,8 @@ def get_secret_refs(data: Dict[str, Any]) -> Dict[str, Set[str]]:
     all_refs = {}
 
     def add_ref(name: str, key: str = None):
-        if not name: return
+        if not name:
+            return
         if name not in all_refs:
             all_refs[name] = set()
         if key:
@@ -59,45 +60,36 @@ def audit(
     path_str: str = typer.Argument(..., help="Path to K8s YAML file or directory"),
     namespace: str = typer.Option("default", "--namespace", "-n"),
     context: str = typer.Option(None, "--context", help="Kubernetes context to use"),
-    kubeconfig: str = typer.Option(None, "--kubeconfig", help="Path to kubeconfig file")
-):    
-
+    kubeconfig: str = typer.Option(None, "--kubeconfig", help="Path to kubeconfig file"),
     quiet: bool = typer.Option(False, "--quiet", "-q", help="Silence per-file status tables and print only the summary")
 ):
-    """
-Deep audit: Checks files or directories against Cluster, Namespace,
-and Secret keys.
-
-Examples:
-  kuberef deployment.yaml  # Scan a single manifest file
-  kuberef ./k8s-manifests/ # Scan an entire directory
- 
-"""
+    """Audit Kubernetes manifests for missing secrets."""
     
-    
-    target_path = Path(path_str)
-
-    files_to_scan = []
-    if target_path.is_dir():
-
-        files_to_scan = list(target_path.rglob("*.yaml")) + list(target_path.rglob("*.yml"))       
-    elif target_path.is_file():
-        files_to_scan = [target_path]
+    path = Path(path_str)
+    if path.is_file():
+        files_to_scan = [path]
+    elif path.is_dir():
+        files_to_scan = list(path.glob("*.yaml")) + list(path.glob("*.yml"))
     else:
-        console.print(f"[bold red]Error:[/bold red] Path {path_str} not found!")
+        console.print(f"[bold red]Error:[/bold red] Path '{path_str}' does not exist")
         raise typer.Exit(1)
 
     if not files_to_scan:
-        console.print(f"[yellow]No YAML files found at {path_str}[/yellow]")
+        console.print(f"[bold yellow]Warning:[/bold yellow] No YAML files found in '{path_str}'")
         return
 
     try:
-        config.load_kube_config(config_file=kubeconfig, context=context)
+        if kubeconfig:
+            config.load_kube_config(config_file=kubeconfig, context=context)
+        else:
+            config.load_kube_config(context=context)
+        
         _, active_context = config.list_kube_config_contexts()
-        cluster_name = active_context['name']
+        cluster_name = active_context['name'] if active_context else "unknown"
         v1 = client.CoreV1Api()
         v1.read_namespace(name=namespace)
         console.print(f"[bold blue]Target Cluster:[/bold blue] {cluster_name}")
+        console.print(f"[bold blue]Target Namespace:[/bold blue] {namespace}")
     except Exception as e:
         console.print(f"[bold red]Pre-flight Error:[/bold red] {str(e)}")
         raise typer.Exit(1)
@@ -110,7 +102,8 @@ Examples:
                 docs = yaml.safe_load_all(f)
                 combined_refs = {}
                 for doc in docs:
-                    if not doc: continue
+                    if not doc:
+                        continue
                     for name, keys in get_secret_refs(doc).items():
                         combined_refs.setdefault(name, set()).update(keys)
             except yaml.YAMLError:
@@ -146,7 +139,7 @@ Examples:
                 else:
                     table.add_row(name, f"[dim]Error {e.status}[/dim]")
                     global_failed += 1
-        
+
         if not quiet:
             console.print(table)
 
