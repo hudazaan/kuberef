@@ -62,6 +62,8 @@ def audit(
     kubeconfig: str = typer.Option(None, "--kubeconfig", help="Path to kubeconfig file")
 ):    
 
+    quiet: bool = typer.Option(False, "--quiet", "-q", help="Silence per-file status tables and print only the summary")
+):
     """
 Deep audit: Checks files or directories against Cluster, Namespace,
 and Secret keys.
@@ -145,7 +147,8 @@ Examples:
                     table.add_row(name, f"[dim]Error {e.status}[/dim]")
                     global_failed += 1
         
-        console.print(table)
+        if not quiet:
+            console.print(table)
 
     console.print("\n" + "━" * 30)
     console.print("[bold underline]AUDIT SUMMARY[/bold underline]\n")
