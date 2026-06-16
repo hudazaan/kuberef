@@ -1,11 +1,18 @@
 import typer
 import yaml
+import json
 from pathlib import Path
 from typing import List, Dict, Any, Set
+from enum import Enum
 from rich.console import Console
 from rich.table import Table
 from kubernetes import client, config
 from kubernetes.client.rest import ApiException
+
+class OutputFormat(str, Enum):
+    TEXT = "text"
+    GITHUB = "github"
+    SARIF = "sarif"
 
 app = typer.Typer()
 console = Console()
@@ -57,7 +64,8 @@ def get_secret_refs(data: Dict[str, Any]) -> Dict[str, Set[str]]:
 @app.command()
 def audit(
     path_str: str = typer.Argument(..., help="Path to K8s YAML file or directory"),
-    namespace: str = typer.Option("default", "--namespace", "-n")
+    namespace: str = typer.Option("default", "--namespace", "-n"),
+    format: OutputFormat = typer.Option(OutputFormat.TEXT, "--format", help="Output format (text, github, sarif)")
 ):
     """Deep audit: Checks files or directories against Cluster, Namespace, and Secret keys."""
     target_path = Path(path_str)
@@ -88,6 +96,7 @@ def audit(
         raise typer.Exit(1)
 
     global_passed, global_failed, global_warnings = 0, 0, 0
+    sarif_results = []
 
     for yaml_file in files_to_scan:
         with open(yaml_file, "r") as f:
@@ -118,6 +127,26 @@ def audit(
                     if missing:
                         table.add_row(name, f"[bold yellow]KEY MISSING: {', '.join(missing)}[/bold yellow]")
                         global_warnings += 1
+                        file_path = yaml_file.as_posix()
+                        for k in missing:
+                            if format == OutputFormat.GITHUB:
+                                print(f"::warning file={file_path},title=Missing Secret Key::The key '{k}' in secret '{name}' was not found.")
+                            sarif_results.append({
+                                "ruleId": "KR002",
+                                "level": "warning",
+                                "message": {
+                                    "text": f"The key '{k}' in secret '{name}' was not found."
+                                },
+                                "locations": [
+                                    {
+                                        "physicalLocation": {
+                                            "artifactLocation": {
+                                                "uri": file_path
+                                            }
+                                        }
+                                    }
+                                ]
+                            })
                     else:
                         table.add_row(name, "[bold green]PASS[/bold green]")
                         global_passed += 1
@@ -125,12 +154,49 @@ def audit(
                     table.add_row(name, "[bold green]PASS (Found)[/bold green]")
                     global_passed += 1
             except ApiException as e:
+                file_path = yaml_file.as_posix()
                 if e.status == 404:
                     table.add_row(name, "[bold red]FAIL (Secret Missing)[/bold red]")
                     global_failed += 1
+                    if format == OutputFormat.GITHUB:
+                        print(f"::error file={file_path},title=Missing Secret Reference::The secret '{name}' was not found in the cluster.")
+                    sarif_results.append({
+                        "ruleId": "KR001",
+                        "level": "error",
+                        "message": {
+                            "text": f"The secret '{name}' was not found in the cluster."
+                        },
+                        "locations": [
+                            {
+                                "physicalLocation": {
+                                    "artifactLocation": {
+                                        "uri": file_path
+                                    }
+                                }
+                            }
+                        ]
+                    })
                 else:
                     table.add_row(name, f"[dim]Error {e.status}[/dim]")
                     global_failed += 1
+                    if format == OutputFormat.GITHUB:
+                        print(f"::error file={file_path},title=Kubernetes API Error::Received HTTP {e.status} when checking secret '{name}'.")
+                    sarif_results.append({
+                        "ruleId": "KR003",
+                        "level": "error",
+                        "message": {
+                            "text": f"Received HTTP {e.status} when checking secret '{name}'."
+                        },
+                        "locations": [
+                            {
+                                "physicalLocation": {
+                                    "artifactLocation": {
+                                        "uri": file_path
+                                    }
+                                }
+                            }
+                        ]
+                    })
         
         console.print(table)
 
@@ -141,6 +207,48 @@ def audit(
     console.print(f"❌ Total Failed:   [red]{global_failed}[/red]")
     console.print(f"⚠️ Total Warnings: [yellow]{global_warnings}[/yellow]")
     console.print("━" * 30 + "\n")
+
+    if format == OutputFormat.SARIF:
+        sarif_data = {
+            "$schema": "https://json.schemastore.org/sarif-2.1.0.json",
+            "version": "2.1.0",
+            "runs": [
+                {
+                    "tool": {
+                        "driver": {
+                            "name": "kuberef",
+                            "rules": [
+                                {
+                                    "id": "KR001",
+                                    "name": "MissingSecret",
+                                    "shortDescription": {
+                                        "text": "Kubernetes Secret Reference missing in cluster"
+                                    }
+                                },
+                                {
+                                    "id": "KR002",
+                                    "name": "MissingSecretKey",
+                                    "shortDescription": {
+                                        "text": "Kubernetes Secret Key missing in cluster"
+                                    }
+                                },
+                                {
+                                    "id": "KR003",
+                                    "name": "KubernetesApiError",
+                                    "shortDescription": {
+                                        "text": "Kubernetes API returned an unexpected error code"
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "results": sarif_results
+                }
+            ]
+        }
+        with open("results.sarif", "w") as sarif_file:
+            json.dump(sarif_data, sarif_file, indent=2)
+        console.print("[bold green]SARIF report exported to results.sarif[/bold green]")
 
     if global_failed > 0 or global_warnings > 0:
         raise typer.Exit(code=1)

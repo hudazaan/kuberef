@@ -125,4 +125,109 @@ def test_invalid_yaml_handling():
         assert result.exit_code in (0, 1)
         # It should contain a clear error/warning message about malformed-pod.yaml.
         assert "Invalid YAML" in result.output
-        assert "malformed-pod.yaml" in result.output
+        assert "malformed-pod.yaml" in result.output
+
+def test_github_annotations():
+    """Verify that --format github prints standard GitHub workflow annotations."""
+    import os
+    from unittest.mock import patch, MagicMock
+    from typer.testing import CliRunner
+    from kuberef.main import app
+
+    runner = CliRunner()
+    
+    with patch("kuberef.main.config.load_kube_config") as mock_load, \
+         patch("kuberef.main.config.list_kube_config_contexts") as mock_contexts, \
+         patch("kuberef.main.client.CoreV1Api") as mock_api_class:
+        
+        mock_contexts.return_value = (None, {"name": "mock-cluster"})
+        mock_api = MagicMock()
+        mock_api_class.return_value = mock_api
+        
+        # We mock one secret exists but misses the expected key 'password'
+        # and one secret is missing entirely
+        def mock_read_secret(name, namespace=None):
+            if name == "db-secret":
+                secret = MagicMock()
+                secret.data = {} # missing key 'password'
+                return secret
+            from kubernetes.client.rest import ApiException
+            raise ApiException(status=404, reason="Not Found")
+            
+        mock_api.read_namespaced_secret.side_effect = mock_read_secret
+        
+        # Test a specific yaml file e.g. complex-pod.yaml
+        test_manifest = os.path.abspath(
+            os.path.join(os.path.dirname(__file__), "..", "test-manifests", "complex-pod.yaml")
+        )
+        
+        result = runner.invoke(app, [test_manifest, "--format", "github"])
+        
+        # It should exit with code 1
+        assert result.exit_code == 1
+        
+        # It should print GitHub workflow annotations
+        # Note: complex-pod.yaml contains references like db-secret (key: password) and api-keys
+        # Let's check stdout contains standard ::error and ::warning syntax
+        assert "::error" in result.output
+        assert "::warning" in result.output
+
+def test_sarif_output():
+    """Verify that --format sarif generates a valid results.sarif file."""
+    import os
+    import json
+    from unittest.mock import patch, MagicMock
+    from typer.testing import CliRunner
+    from kuberef.main import app
+
+    runner = CliRunner()
+    
+    with patch("kuberef.main.config.load_kube_config") as mock_load, \
+         patch("kuberef.main.config.list_kube_config_contexts") as mock_contexts, \
+         patch("kuberef.main.client.CoreV1Api") as mock_api_class:
+        
+        mock_contexts.return_value = (None, {"name": "mock-cluster"})
+        mock_api = MagicMock()
+        mock_api_class.return_value = mock_api
+        
+        def mock_read_secret(name, namespace=None):
+            if name == "db-secret":
+                secret = MagicMock()
+                secret.data = {} # missing key 'password'
+                return secret
+            from kubernetes.client.rest import ApiException
+            raise ApiException(status=404, reason="Not Found")
+            
+        mock_api.read_namespaced_secret.side_effect = mock_read_secret
+        
+        test_manifest = os.path.abspath(
+            os.path.join(os.path.dirname(__file__), "..", "test-manifests", "complex-pod.yaml")
+        )
+        
+        # Clean up any pre-existing results.sarif
+        if os.path.exists("results.sarif"):
+            os.remove("results.sarif")
+            
+        try:
+            result = runner.invoke(app, [test_manifest, "--format", "sarif"])
+            
+            assert result.exit_code == 1
+            assert os.path.exists("results.sarif")
+            
+            with open("results.sarif", "r") as f:
+                sarif_data = json.load(f)
+                
+            assert sarif_data["version"] == "2.1.0"
+            assert len(sarif_data["runs"]) == 1
+            assert sarif_data["runs"][0]["tool"]["driver"]["name"] == "kuberef"
+            
+            results = sarif_data["runs"][0]["results"]
+            assert len(results) > 0
+            
+            # Check for specific ruleIds
+            rule_ids = [r["ruleId"] for r in results]
+            assert "KR001" in rule_ids # MissingSecret
+            assert "KR002" in rule_ids # MissingSecretKey
+        finally:
+            if os.path.exists("results.sarif"):
+                os.remove("results.sarif")
