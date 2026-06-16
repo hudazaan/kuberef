@@ -1,7 +1,7 @@
 import typer
 import yaml
 from pathlib import Path
-from typing import List, Dict, Any, Set
+from typing import List, Dict, Any, Set, Tuple
 from rich.console import Console
 from rich.table import Table
 from kubernetes import client, config
@@ -55,6 +55,39 @@ def get_secret_refs(data: Dict[str, Any]) -> Dict[str, Set[str]]:
 
     return all_refs
 
+def get_configmap_refs(data: Dict[str, Any]) -> Dict[str, Set[str]]:
+    """Maps ConfigMap names to the specific keys they need to provide."""
+    all_refs = {}
+
+    def add_ref(name: str, key: str = None):
+        if not name:
+            return
+        if name not in all_refs:
+            all_refs[name] = set()
+        if key:
+            all_refs[name].add(key)
+
+    for spec in find_pod_specs(data):
+        containers = spec.get("containers", []) + spec.get("initContainers", [])
+        for c in containers:
+            # Pattern 1: env.valueFrom.configMapKeyRef
+            for env in c.get("env", []):
+                if "valueFrom" in env and "configMapKeyRef" in env["valueFrom"]:
+                    ref = env["valueFrom"]["configMapKeyRef"]
+                    add_ref(ref.get("name"), ref.get("key"))
+            
+            # Pattern 2: envFrom.configMapRef
+            for ef in c.get("envFrom", []):
+                if "configMapRef" in ef:
+                    add_ref(ef["configMapRef"].get("name"))
+
+        # Pattern 3: volumes.configMap (not common, but possible)
+        for vol in spec.get("volumes", []):
+            if "configMap" in vol:
+                add_ref(vol.get("configMap", {}).get("name"))
+
+    return all_refs
+
 @app.command()
 def audit(
     path_str: str = typer.Argument(..., help="Path to K8s YAML file or directory"),
@@ -63,7 +96,7 @@ def audit(
     kubeconfig: str = typer.Option(None, "--kubeconfig", help="Path to kubeconfig file"),
     quiet: bool = typer.Option(False, "--quiet", "-q", help="Silence per-file status tables and print only the summary")
 ):
-    """Audit Kubernetes manifests for missing secrets."""
+    """Audit Kubernetes manifests for missing Secrets and ConfigMaps."""
     
     path = Path(path_str)
     if path.is_file():
@@ -95,61 +128,121 @@ def audit(
         raise typer.Exit(1)
 
     global_passed, global_failed, global_warnings = 0, 0, 0
+    secret_passed, secret_failed = 0, 0
+    configmap_passed, configmap_failed = 0, 0
 
     for yaml_file in files_to_scan:
         with open(yaml_file, "r") as f:
             try:
                 docs = yaml.safe_load_all(f)
-                combined_refs = {}
+                secret_refs = {}
+                configmap_refs = {}
+                
                 for doc in docs:
                     if not doc:
                         continue
                     for name, keys in get_secret_refs(doc).items():
-                        combined_refs.setdefault(name, set()).update(keys)
+                        secret_refs.setdefault(name, set()).update(keys)
+                    for name, keys in get_configmap_refs(doc).items():
+                        configmap_refs.setdefault(name, set()).update(keys)
+                        
             except yaml.YAMLError:
                 console.print(f"[bold red]Error:[/bold red] Invalid YAML format in {yaml_file.name}. Skipping...")
                 continue
 
-        if not combined_refs:
+        if not secret_refs and not configmap_refs:
             continue
 
-        table = Table(title=f"Security Audit: {yaml_file.name}")
-        table.add_column("Secret Name", style="cyan")
-        table.add_column("Status", justify="left")
-
-        for name, keys in combined_refs.items():
-            try:
-                secret = v1.read_namespaced_secret(name, namespace)
-                if keys:
-                    existing_keys = (secret.data or {}).keys()
-                    missing = [k for k in keys if k not in existing_keys]
-                    if missing:
-                        table.add_row(name, f"[bold yellow]KEY MISSING: {', '.join(missing)}[/bold yellow]")
-                        global_warnings += 1
+        # Secrets Table
+        if secret_refs:
+            secret_table = Table(title=f"🔐 Secret Audit: {yaml_file.name}", style="cyan")
+            secret_table.add_column("Secret Name", style="cyan")
+            secret_table.add_column("Status", justify="left")
+            
+            for name, keys in secret_refs.items():
+                try:
+                    secret = v1.read_namespaced_secret(name, namespace)
+                    if keys:
+                        existing_keys = (secret.data or {}).keys()
+                        missing = [k for k in keys if k not in existing_keys]
+                        if missing:
+                            secret_table.add_row(name, f"[bold yellow]KEY MISSING: {', '.join(missing)}[/bold yellow]")
+                            global_warnings += 1
+                        else:
+                            secret_table.add_row(name, "[bold green]PASS[/bold green]")
+                            global_passed += 1
+                            secret_passed += 1
                     else:
-                        table.add_row(name, "[bold green]PASS[/bold green]")
+                        secret_table.add_row(name, "[bold green]PASS (Found)[/bold green]")
                         global_passed += 1
-                else:
-                    table.add_row(name, "[bold green]PASS (Found)[/bold green]")
-                    global_passed += 1
-            except ApiException as e:
-                if e.status == 404:
-                    table.add_row(name, "[bold red]FAIL (Secret Missing)[/bold red]")
-                    global_failed += 1
-                else:
-                    table.add_row(name, f"[dim]Error {e.status}[/dim]")
-                    global_failed += 1
+                        secret_passed += 1
+                except ApiException as e:
+                    if e.status == 404:
+                        secret_table.add_row(name, "[bold red]FAIL (Secret Missing)[/bold red]")
+                        global_failed += 1
+                        secret_failed += 1
+                    else:
+                        secret_table.add_row(name, f"[dim]Error {e.status}[/dim]")
+                        global_failed += 1
+                        secret_failed += 1
+            
+            if not quiet:
+                console.print(secret_table)
 
-        if not quiet:
-            console.print(table)
+        # ConfigMaps Table
+        if configmap_refs:
+            cm_table = Table(title=f"📄 ConfigMap Audit: {yaml_file.name}", style="green")
+            cm_table.add_column("ConfigMap Name", style="green")
+            cm_table.add_column("Status", justify="left")
+            
+            for name, keys in configmap_refs.items():
+                try:
+                    configmap = v1.read_namespaced_config_map(name, namespace)
+                    if keys:
+                        existing_keys = (configmap.data or {}).keys()
+                        missing = [k for k in keys if k not in existing_keys]
+                        if missing:
+                            cm_table.add_row(name, f"[bold yellow]KEY MISSING: {', '.join(missing)}[/bold yellow]")
+                            global_warnings += 1
+                        else:
+                            cm_table.add_row(name, "[bold green]PASS[/bold green]")
+                            global_passed += 1
+                            configmap_passed += 1
+                    else:
+                        cm_table.add_row(name, "[bold green]PASS (Found)[/bold green]")
+                        global_passed += 1
+                        configmap_passed += 1
+                except ApiException as e:
+                    if e.status == 404:
+                        cm_table.add_row(name, "[bold red]FAIL (ConfigMap Missing)[/bold red]")
+                        global_failed += 1
+                        configmap_failed += 1
+                    else:
+                        cm_table.add_row(name, f"[dim]Error {e.status}[/dim]")
+                        global_failed += 1
+                        configmap_failed += 1
+            
+            if not quiet:
+                console.print(cm_table)
 
-    console.print("\n" + "━" * 30)
+    # Summary
+    console.print("\n" + "━" * 40)
     console.print("[bold underline]AUDIT SUMMARY[/bold underline]\n")
     console.print(f"📂 Files Scanned: {len(files_to_scan)}")
-    console.print(f"✅ Total Passed:   [green]{global_passed}[/green]")
-    console.print(f"❌ Total Failed:   [red]{global_failed}[/red]")
-    console.print(f"⚠️ Total Warnings: [yellow]{global_warnings}[/yellow]")
-    console.print("━" * 30 + "\n")
+    console.print(f"")
+    console.print(f"🔐 Secrets:")
+    console.print(f"   ✅ Passed:   [green]{secret_passed}[/green]")
+    console.print(f"   ❌ Failed:   [red]{secret_failed}[/red]")
+    console.print(f"")
+    console.print(f"📄 ConfigMaps:")
+    console.print(f"   ✅ Passed:   [green]{configmap_passed}[/green]")
+    console.print(f"   ❌ Failed:   [red]{configmap_failed}[/red]")
+    console.print(f"")
+    console.print(f"📊 Total:")
+    console.print(f"   ✅ Total Passed:   [green]{global_passed}[/green]")
+    console.print(f"   ❌ Total Failed:   [red]{global_failed}[/red]")
+    console.print(f"   ⚠️ Total Warnings: [yellow]{global_warnings}[/yellow]")
+    console.print("━" * 40 + "\n")
 
     if global_failed > 0 or global_warnings > 0:
         raise typer.Exit(code=1)
