@@ -10,7 +10,7 @@ from kubernetes import client, config
 from kubernetes.client.rest import ApiException
 
 class OutputFormat(str, Enum):
-    TEXT = "text"
+    TABLE = "table"
     GITHUB = "github"
     SARIF = "sarif"
 
@@ -64,12 +64,11 @@ def get_secret_refs(data: Dict[str, Any]) -> Dict[str, Set[str]]:
 
     return all_refs
 
-
 def run_audit(
     files_to_scan: List[Path],
     namespace: str,
     v1: Any,
-    format: OutputFormat = OutputFormat.TEXT,
+    format: OutputFormat = OutputFormat.TABLE,
     quiet: bool = False,
 ) -> int:
     """
@@ -93,6 +92,29 @@ def run_audit(
                 console.print(
                     f"[bold red]Error:[/bold red] Invalid YAML format in {yaml_file.name}. Skipping..."
                 )
+                global_failed += 1
+                file_path = yaml_file.as_posix()
+                if format == OutputFormat.GITHUB:
+                    print(
+                        f"::error file={file_path},title=Invalid YAML::Invalid YAML format in {yaml_file.name}."
+                    )
+                elif format == OutputFormat.SARIF:
+                    sarif_results.append({
+                        "ruleId": "KR000",
+                        "level": "error",
+                        "message": {
+                            "text": f"Invalid YAML format in {yaml_file.name}."
+                        },
+                        "locations": [
+                            {
+                                "physicalLocation": {
+                                    "artifactLocation": {
+                                        "uri": file_path
+                                    }
+                                }
+                            }
+                        ]
+                    })
                 continue
 
         if not combined_refs:
@@ -207,6 +229,13 @@ def run_audit(
                             "name": "kuberef",
                             "rules": [
                                 {
+                                    "id": "KR000",
+                                    "name": "InvalidYaml",
+                                    "shortDescription": {
+                                        "text": "Invalid YAML file format"
+                                    }
+                                },
+                                {
                                     "id": "KR001",
                                     "name": "MissingSecret",
                                     "shortDescription": {
@@ -245,9 +274,21 @@ def run_audit(
 def audit(
     path_str: str = typer.Argument(..., help="Path to K8s YAML file or directory"),
     namespace: str = typer.Option("default", "--namespace", "-n"),
-    format: OutputFormat = typer.Option(OutputFormat.TEXT, "--format", help="Output format (text, github, sarif)"),
-    quiet: bool = typer.Option(False, "--quiet", "-q", help="Silence per-file status tables and print only the summary"),
-    watch: bool = typer.Option(False, "--watch", "-w", help="Stay running and re-audit on every .yaml/.yml file change."),
+    format: OutputFormat = typer.Option(
+        OutputFormat.TABLE, "--format", help="Output format (table, github, sarif)"
+    ),
+    quiet: bool = typer.Option(
+        False,
+        "--quiet",
+        "-q",
+        help="Silence per-file status tables and print only the summary",
+    ),
+    watch: bool = typer.Option(
+        False,
+        "--watch",
+        "-w",
+        help="Stay running and re-audit on every .yaml/.yml file change.",
+    ),
 ):
     """
 Deep audit: Checks files or directories against Cluster, Namespace,
