@@ -337,7 +337,10 @@ Examples:
                 updated_files = list(target_path.rglob("*.yaml")) + list(target_path.rglob("*.yml"))
             else:
                 updated_files = [changed_path]
-            run_audit(updated_files, namespace, v1, format=format, quiet=quiet)
+            try:
+                run_audit(updated_files, namespace, v1, format=format, quiet=quiet)
+            except Exception as e:
+                console.print(f"[bold red]Error during re-audit:[/bold red] {str(e)}")
 
         run_watch_mode(target_path, _on_change)
     else:
