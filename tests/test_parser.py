@@ -167,4 +167,32 @@ def test_quiet_mode():
         result_quiet = runner.invoke(app, [test_manifests_dir, "--quiet"])
         assert result_quiet.exit_code in (0, 1)
         assert "Security Audit:" not in result_quiet.output
-        assert "AUDIT SUMMARY" in result_quiet.output
+        assert "AUDIT SUMMARY" in result_quiet.output
+
+
+import os
+import yaml
+from kuberef.main import get_secret_refs  # Compiles the parser method
+
+def test_complex_pod_secret_references():
+    """
+    Verifies that the parser extracts all 4 core Secret reference patterns
+    (env, envFrom, volumes, and imagePullSecrets) from a real manifest file.
+    """
+    # 1. Safely locate the test-manifests directory relative to this file
+    current_dir = os.path.dirname(os.path.abspath(__file__))
+    project_root = os.path.dirname(current_dir)
+    manifest_path = os.path.join(project_root, "test-manifests", "complex-pod.yaml")
+    
+    # 2. Read and parse the raw static YAML file from disk
+    with open(manifest_path, "r") as file:
+        manifest_data = yaml.safe_load(file)
+        
+    # 3. Pass the parsed dictionary data to the Kuberef discovery engine
+    discovered_secrets = get_secret_refs(manifest_data)
+    
+    # 4. Assert that all 4 expected target secrets are extracted properly
+    assert "registry-creds" in discovered_secrets, "Failed to extract secret from imagePullSecrets"
+    assert "db-secret" in discovered_secrets, "Failed to extract secret from env.valueFrom"
+    assert "api-keys" in discovered_secrets, "Failed to extract secret from envFrom"
+    assert "ssl-certs" in discovered_secrets, "Failed to extract secret from volumes"

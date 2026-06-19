@@ -13,12 +13,26 @@ dependencies = [
     "kubernetes>=29.0.0",
     "typer>=0.12.0",
     "rich>=13.0.0",
-    "PyYAML>=6.0.1"
+    "PyYAML>=6.0.1",
+    "watchdog>=3.0.0"
 ]
 
 [tool.poetry]
-# This tells Poetry where my code lives
+name = "kuberef"
+version = "0.1.14"
+description = "A Cloud-Native validator for Kubernetes Secret references."
+authors = ["hudazaan <naazhuda2000@gmail.com>"]
 packages = [{include = "kuberef", from = "src"}]
+
+[tool.poetry.dependencies]
+python = ">=3.12"
+kubernetes = ">=29.0.0"
+typer = ">=0.12.0"
+rich = ">=13.0.0"
+PyYAML = ">=6.0.1"
+
+[tool.poetry.group.dev.dependencies]
+pytest = "^9.0.3"
 
 [build-system]
 requires = ["poetry-core>=2.0.0,<3.0.0"]
