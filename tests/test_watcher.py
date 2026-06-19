@@ -124,3 +124,25 @@ def test_run_watch_mode_watches_directory_directly(tmp_path):
 
         scheduled_path = mock_observer.schedule.call_args[0][1]
         assert scheduled_path == str(tmp_path)
+
+
+# ---------------------------------------------------------------------------
+# Watchdog Dependency validation tests
+# ---------------------------------------------------------------------------
+
+def test_watchdog_dependency_is_importable():
+    """Verify that watchdog components are successfully importable without ModuleNotFoundError."""
+    try:
+        from watchdog.events import FileSystemEventHandler
+        from watchdog.observers import Observer
+    except ImportError as e:
+        assert False, f"Failed to import watchdog dependency components: {e}"
+
+
+def test_watchdog_observer_initialization():
+    """Verify that a watchdog Observer instance can be created cleanly."""
+    from watchdog.observers import Observer
+    observer = Observer()
+    assert observer is not None
+    assert hasattr(observer, 'schedule')
+    assert hasattr(observer, 'start')
