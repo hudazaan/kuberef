@@ -63,13 +63,19 @@ def audit(
     kubeconfig: str = typer.Option(None, "--kubeconfig", help="Path to kubeconfig file"),
     quiet: bool = typer.Option(False, "--quiet", "-q", help="Silence per-file status tables and print only the summary")
 ):
-    """Audit Kubernetes manifests for missing secrets."""
-    
+    """Audit Kubernetes manifests for missing secrets.
+
+    Supports:
+    - Recursive directory scanning for .yaml and .yml files
+    - Kubernetes context and kubeconfig options
+    - Per-file and summary output
+    """
+
     path = Path(path_str)
     if path.is_file():
         files_to_scan = [path]
     elif path.is_dir():
-        files_to_scan = list(path.glob("*.yaml")) + list(path.glob("*.yml"))
+        files_to_scan = list(path.rglob("*.yaml")) + list(path.rglob("*.yml"))
     else:
         console.print(f"[bold red]Error:[/bold red] Path '{path_str}' does not exist")
         raise typer.Exit(1)
