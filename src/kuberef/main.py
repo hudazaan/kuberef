@@ -57,51 +57,6 @@ def get_secret_refs(data: Dict[str, Any]) -> Dict[str, Set[str]]:
 
     return all_refs
 
-@app.command()
-def audit(
-    path_str: str = typer.Argument(..., help="Path to K8s YAML file or directory"),
-    namespace: str = typer.Option("default", "--namespace", "-n"),
-    context: str = typer.Option(None, "--context", help="Kubernetes context to use"),
-    kubeconfig: str = typer.Option(None, "--kubeconfig", help="Path to kubeconfig file"),
-    quiet: bool = typer.Option(False, "--quiet", "-q", help="Silence per-file status tables and print only the summary")
-):
-    """Audit Kubernetes manifests for missing secrets.
-
-    Supports:
-    - Recursive directory scanning for .yaml and .yml files
-    - Kubernetes context and kubeconfig options
-    - Per-file and summary output
-    """
-
-    path = Path(path_str)
-    if path.is_file():
-        files_to_scan = [path]
-    elif path.is_dir():
-        files_to_scan = list(path.rglob("*.yaml")) + list(path.rglob("*.yml"))
-    else:
-        console.print(f"[bold red]Error:[/bold red] Path '{path_str}' does not exist")
-        raise typer.Exit(1)
-
-    if not files_to_scan:
-        console.print(f"[bold yellow]Warning:[/bold yellow] No YAML files found in '{path_str}'")
-        return
-
-    try:
-        if kubeconfig:
-            config.load_kube_config(config_file=kubeconfig, context=context)
-        else:
-            config.load_kube_config(context=context)
-        
-        _, active_context = config.list_kube_config_contexts()
-        cluster_name = active_context['name'] if active_context else "unknown"
-        v1 = client.CoreV1Api()
-        v1.read_namespace(name=namespace)
-        console.print(f"[bold blue]Target Cluster:[/bold blue] {cluster_name}")
-        console.print(f"[bold blue]Target Namespace:[/bold blue] {namespace}")
-    except Exception as e:
-        console.print(f"[bold red]Pre-flight Error:[/bold red] {str(e)}")
-        raise typer.Exit(1)
-
 def run_audit(files_to_scan: List[Path], namespace: str, v1: Any, quiet: bool = False) -> int:
     """
     Core audit logic. Scans the given files against the live cluster.
@@ -176,6 +131,8 @@ def run_audit(files_to_scan: List[Path], namespace: str, v1: Any, quiet: bool = 
 def audit(
     path_str: str = typer.Argument(..., help="Path to K8s YAML file or directory"),
     namespace: str = typer.Option("default", "--namespace", "-n"),
+    context: str = typer.Option(None, "--context", help="Kubernetes context to use"),
+    kubeconfig: str = typer.Option(None, "--kubeconfig", help="Path to kubeconfig file"),
     quiet: bool = typer.Option(False, "--quiet", "-q", help="Silence per-file status tables and print only the summary"),
     watch: bool = typer.Option(False, "--watch", "-w", help="Stay running and re-audit on every .yaml/.yml file change."),
 ):
@@ -206,12 +163,16 @@ Examples:
         return
 
     try:
-        config.load_kube_config()
+        if kubeconfig:
+            config.load_kube_config(config_file=kubeconfig, context=context)
+        else:
+            config.load_kube_config(context=context)
         _, active_context = config.list_kube_config_contexts()
-        cluster_name = active_context["name"]
+        cluster_name = active_context["name"] if active_context else "unknown"
         v1 = client.CoreV1Api()
         v1.read_namespace(name=namespace)
         console.print(f"[bold blue]Target Cluster:[/bold blue] {cluster_name}")
+        console.print(f"[bold blue]Target Namespace:[/bold blue] {namespace}")
     except Exception as e:
         console.print(f"[bold red]Pre-flight Error:[/bold red] {str(e)}")
         raise typer.Exit(1)
