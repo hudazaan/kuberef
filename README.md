@@ -120,6 +120,17 @@ kuberef ./k8s-manifests/ -w
 
 Press `Ctrl+C` to stop.
 
+### Summary-Only Mode
+
+Silence the per-file status tables and print only the final aggregate audit summary. Useful for CI/CD pipelines where concise output is preferred:
+
+```bash
+kuberef ./k8s-manifests/ --quiet
+kuberef ./k8s-manifests/ -q
+```
+
+The final `AUDIT SUMMARY` with pass/fail counts and exit codes remains fully visible.
+
 ---
 
 ## Technical Architecture
