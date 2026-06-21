@@ -42,6 +42,58 @@ def test_handler_triggers_on_yaml_created():
     callback.assert_called_once_with(Path("/some/path/new-manifest.yaml"))
 
 
+@patch("kuberef.watcher.time.time")
+def test_handler_suppresses_rapid_events(mock_time):
+    """Multiple rapid events for the same file should trigger the callback only once."""
+    handler, callback = _make_handler()
+    
+    # Event 1 at T=0
+    mock_time.return_value = 0.0
+    event1 = FileModifiedEvent("/some/path/deployment.yaml")
+    handler.on_modified(event1)
+    
+    # Event 2 at T=0.1 (within default 1.5s cooldown)
+    mock_time.return_value = 0.1
+    event2 = FileModifiedEvent("/some/path/deployment.yaml")
+    handler.on_modified(event2)
+    
+    # Callback should be called exactly once
+    callback.assert_called_once_with(Path("/some/path/deployment.yaml"))
+
+
+@patch("kuberef.watcher.time.time")
+def test_handler_recovers_after_cooldown(mock_time):
+    """Event after the cooldown window should trigger the callback again."""
+    handler, callback = _make_handler()
+    
+    # Event 1 at T=0
+    mock_time.return_value = 0.0
+    handler.on_modified(FileModifiedEvent("/some/path/deployment.yaml"))
+    
+    # Event 2 at T=1.6 (after 1.5s cooldown)
+    mock_time.return_value = 1.6
+    handler.on_modified(FileModifiedEvent("/some/path/deployment.yaml"))
+    
+    # Callback should be called twice
+    assert callback.call_count == 2
+
+
+@patch("kuberef.watcher.time.time")
+def test_handler_independent_files(mock_time):
+    """Rapid events on different files should trigger separate callbacks."""
+    handler, callback = _make_handler()
+    
+    # Both events at T=0 (simultaneous save of two files)
+    mock_time.return_value = 0.0
+    handler.on_modified(FileModifiedEvent("/some/path/file_a.yaml"))
+    handler.on_modified(FileModifiedEvent("/some/path/file_b.yaml"))
+    
+    # Callback should be called once for each file
+    assert callback.call_count == 2
+    callback.assert_any_call(Path("/some/path/file_a.yaml"))
+    callback.assert_any_call(Path("/some/path/file_b.yaml"))
+
+
 def test_handler_ignores_non_yaml_files():
     """Non-.yaml/.yml file changes must NOT trigger the callback."""
     handler, callback = _make_handler()
