@@ -14,7 +14,7 @@ YAML_SUFFIXES = {".yaml", ".yml"}
 class YamlAuditHandler(FileSystemEventHandler):
     """This Triggers a re-audit whenever a .yaml/.yml file is modified or created."""
 
-    def __init__(self, audit_callback: Callable[[Path], None], cooldown_seconds: float = 0.5):
+    def __init__(self, audit_callback: Callable[[Path], None], cooldown_seconds: float = 1.5):
         super().__init__()
         self.audit_callback = audit_callback
         self.cooldown_seconds = cooldown_seconds

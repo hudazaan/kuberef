@@ -52,7 +52,7 @@ def test_handler_suppresses_rapid_events(mock_time):
     event1 = FileModifiedEvent("/some/path/deployment.yaml")
     handler.on_modified(event1)
     
-    # Event 2 at T=0.1 (within default 0.5s cooldown)
+    # Event 2 at T=0.1 (within default 1.5s cooldown)
     mock_time.return_value = 0.1
     event2 = FileModifiedEvent("/some/path/deployment.yaml")
     handler.on_modified(event2)
@@ -70,8 +70,8 @@ def test_handler_recovers_after_cooldown(mock_time):
     mock_time.return_value = 0.0
     handler.on_modified(FileModifiedEvent("/some/path/deployment.yaml"))
     
-    # Event 2 at T=0.6 (after 0.5s cooldown)
-    mock_time.return_value = 0.6
+    # Event 2 at T=1.6 (after 1.5s cooldown)
+    mock_time.return_value = 1.6
     handler.on_modified(FileModifiedEvent("/some/path/deployment.yaml"))
     
     # Callback should be called twice
