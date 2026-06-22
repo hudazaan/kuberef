@@ -1,3 +1,4 @@
+import json
 import typer
 import yaml
 from pathlib import Path
@@ -57,13 +58,22 @@ def get_secret_refs(data: Dict[str, Any]) -> Dict[str, Set[str]]:
 
     return all_refs
 
+def build_summary(files_scanned: int, passed: int, failed: int, warnings: int, files: list):
+    return {
+        "files_scanned": files_scanned,
+        "passes": passed,
+        "failures": failed,
+        "warnings": warnings,
+        "files": files,
+    }
 
-def run_audit(files_to_scan: List[Path], namespace: str, v1: Any, quiet: bool = False) -> int:
+def run_audit(files_to_scan: List[Path], namespace: str, v1: Any, quiet: bool = False, json_output: bool = False) -> int:
     """
     Core audit logic. Scans the given files against the live cluster.
     Returns exit code: 0 for clean, 1 for failures/warnings.
     """
     global_passed, global_failed, global_warnings = 0, 0, 0
+    json_results = []
 
     for yaml_file in files_to_scan:
         with open(yaml_file, "r") as f:
@@ -76,13 +86,19 @@ def run_audit(files_to_scan: List[Path], namespace: str, v1: Any, quiet: bool = 
                     for name, keys in get_secret_refs(doc).items():
                         combined_refs.setdefault(name, set()).update(keys)
             except yaml.YAMLError:
-                console.print(
-                    f"[bold red]Error:[/bold red] Invalid YAML format in {yaml_file.name}. Skipping..."
-                )
+                if json_output:
+                   json_results.append({
+                       "file": yaml_file.name,
+                       "status": "INVALID_YAML"
+                   })
+                else:
+                    console.print(
+                       f"[bold red]Error:[/bold red] Invalid YAML format in {yaml_file.name}. Skipping..."
+                    )
                 continue
-
         if not combined_refs:
             continue
+        file_results = []
 
         table = Table(title=f"Security Audit: {yaml_file.name}")
         table.add_column("Secret Name", style="cyan")
@@ -99,31 +115,57 @@ def run_audit(files_to_scan: List[Path], namespace: str, v1: Any, quiet: bool = 
                             name,
                             f"[bold yellow]KEY MISSING: {', '.join(missing)}[/bold yellow]",
                         )
+                        file_results.append({
+                                "secret": name,
+                                "status": "WARNING",
+                                "missing_keys": missing
+                        })
                         global_warnings += 1
                     else:
                         table.add_row(name, "[bold green]PASS[/bold green]")
+                        file_results.append({
+                             "secret": name,
+                             "status": "PASS"
+                        })
                         global_passed += 1
                 else:
                     table.add_row(name, "[bold green]PASS (Found)[/bold green]")
+                    file_results.append({
+                        "secret": name,
+                        "status": "PASS"
+                    })
                     global_passed += 1
             except ApiException as e:
                 if e.status == 404:
                     table.add_row(name, "[bold red]FAIL (Secret Missing)[/bold red]")
+                    file_results.append({
+                            "secret": name,
+                            "status": "FAIL"
+                    })
                     global_failed += 1
                 else:
                     table.add_row(name, f"[dim]Error {e.status}[/dim]")
                     global_failed += 1
 
-        if not quiet:
+        json_results.append({
+            "file": yaml_file.name,
+            "results": file_results
+        })
+
+        if not quiet and not json_output:
             console.print(table)
 
-    console.print("\n" + "━" * 30)
-    console.print("[bold underline]AUDIT SUMMARY[/bold underline]\n")
-    console.print(f"📂 Files Scanned: {len(files_to_scan)}")
-    console.print(f"✅ Total Passed:   [green]{global_passed}[/green]")
-    console.print(f"❌ Total Failed:   [red]{global_failed}[/red]")
-    console.print(f"⚠️  Total Warnings: [yellow]{global_warnings}[/yellow]")
-    console.print("━" * 30 + "\n")
+    summary = build_summary(len(files_to_scan), global_passed, global_failed, global_warnings, json_results)
+    if json_output:
+        print(json.dumps(summary, indent=2))        
+    else:
+        console.print("\n" + "━" * 30)
+        console.print("[bold underline]AUDIT SUMMARY[/bold underline]\n")
+        console.print(f"📂 Files Scanned: {len(files_to_scan)}")
+        console.print(f"✅ Total Passed:   [green]{global_passed}[/green]")
+        console.print(f"❌ Total Failed:   [red]{global_failed}[/red]")
+        console.print(f"⚠️  Total Warnings: [yellow]{global_warnings}[/yellow]")
+        console.print("━" * 30 + "\n")
 
     return 1 if (global_failed > 0 or global_warnings > 0) else 0
 
@@ -158,6 +200,7 @@ def audit(
     namespace: str = typer.Option("default", "--namespace", "-n"),
     quiet: bool = typer.Option(False, "--quiet", "-q", help="Silence per-file status tables and print only the summary"),
     watch: bool = typer.Option(False, "--watch", "-w", help="Stay running and re-audit on every .yaml/.yml file change."),
+    json_output: bool = typer.Option(False, "--json", "-j", help="Output summary in JSON format"),
 ):
     """
 Deep audit: Checks files or directories against Cluster, Namespace,
@@ -191,12 +234,13 @@ Examples:
         cluster_name = active_context["name"]
         v1 = client.CoreV1Api()
         v1.read_namespace(name=namespace)
-        console.print(f"[bold blue]Target Cluster:[/bold blue] {cluster_name}")
+        if not json_output:
+           console.print(f"[bold blue]Target Cluster:[/bold blue] {cluster_name}")
     except Exception as e:
         console.print(f"[bold red]Pre-flight Error:[/bold red] {str(e)}")
         raise typer.Exit(1)
 
-    exit_code = run_audit(files_to_scan, namespace, v1, quiet=quiet)
+    exit_code = run_audit(files_to_scan, namespace, v1, quiet=quiet, json_output=json_output)
 
     if watch:
         from kuberef.watcher import run_watch_mode
@@ -206,7 +250,7 @@ Examples:
                 updated_files = get_yaml_files(target_path)
             else:
                 updated_files = [changed_path]
-            run_audit(updated_files, namespace, v1, quiet=quiet)
+            run_audit(updated_files, namespace, v1, quiet=quiet, json_output=json_output)
 
         run_watch_mode(target_path, _on_change)
     else:
