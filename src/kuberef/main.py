@@ -136,7 +136,7 @@ def get_yaml_files(target_path: Path) -> List[Path]:
     files = list(target_path.rglob("*.yaml")) + list(target_path.rglob("*.yml"))
     return [
         f for f in files
-        if not any(part in EXCLUDE_DIRS for part in f.parts)
+        if not any(part in EXCLUDE_DIRS for part in f.relative_to(target_path).parts)
     ]
 
 

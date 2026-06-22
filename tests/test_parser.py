@@ -232,3 +232,26 @@ def test_get_yaml_files_excludes_directories(tmp_path):
     assert "lib.yml" not in discovered_names
     assert "package.yaml" not in discovered_names
     assert len(discovered) == 1
+
+
+def test_get_yaml_files_with_excluded_name_in_parent_path(tmp_path):
+    """Verify that get_yaml_files does not exclude files just because a parent directory contains an excluded name."""
+    # Create a parent directory named 'venv'
+    parent_dir = tmp_path / "venv"
+    parent_dir.mkdir()
+    
+    # Create a target directory inside the 'venv' folder
+    target_dir = parent_dir / "my-project"
+    target_dir.mkdir()
+    
+    # Create a valid yaml manifest inside 'my-project'
+    valid_file = target_dir / "deployment.yaml"
+    valid_file.write_text("kind: Deployment")
+    
+    # Scan the target directory
+    discovered = get_yaml_files(target_dir)
+    
+    # It should discover the valid deployment.yaml file!
+    discovered_names = [f.name for f in discovered]
+    assert "deployment.yaml" in discovered_names
+    assert len(discovered) == 1
