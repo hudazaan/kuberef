@@ -128,7 +128,19 @@ def run_audit(files_to_scan: List[Path], namespace: str, v1: Any, quiet: bool = 
     return 1 if (global_failed > 0 or global_warnings > 0) else 0
 
 
-EXCLUDE_DIRS = {".git", ".github", ".venv", "venv", "node_modules", "__pycache__"}
+EXCLUDE_DIRS = {
+    ".git",
+    ".github",
+    ".venv",
+    "venv",
+    "node_modules",
+    "__pycache__",
+    "build",
+    "dist",
+    ".tox",
+    ".mypy_cache",
+    ".pytest_cache",
+}
 
 
 def get_yaml_files(target_path: Path) -> List[Path]:

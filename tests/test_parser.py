@@ -222,6 +222,11 @@ def test_get_yaml_files_excludes_directories(tmp_path):
     node_modules_file = node_modules_dir / "package.yaml"
     node_modules_file.write_text("npm-yaml")
     
+    build_dir = tmp_path / "build"
+    build_dir.mkdir()
+    build_file = build_dir / "build-config.yaml"
+    build_file.write_text("some-build-config")
+    
     # Run the get_yaml_files helper
     discovered = get_yaml_files(tmp_path)
     
@@ -231,6 +236,7 @@ def test_get_yaml_files_excludes_directories(tmp_path):
     assert "config.yaml" not in discovered_names
     assert "lib.yml" not in discovered_names
     assert "package.yaml" not in discovered_names
+    assert "build-config.yaml" not in discovered_names
     assert len(discovered) == 1
 
 
