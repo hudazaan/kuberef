@@ -86,12 +86,16 @@ def run_audit(files_to_scan: List[Path], namespace: str, v1: Any, quiet: bool = 
                     for name, keys in get_secret_refs(doc).items():
                         combined_refs.setdefault(name, set()).update(keys)
             except yaml.YAMLError:
-                if not json_output:
-                   console.print(
-                    f"[bold red]Error:[/bold red] Invalid YAML format in {yaml_file.name}. Skipping..."
-                )
+                if json_output:
+                   json_results.append({
+                       "file": yaml_file.name,
+                       "status": "INVALID_YAML"
+                   })
+                else:
+                    console.print(
+                       f"[bold red]Error:[/bold red] Invalid YAML format in {yaml_file.name}. Skipping..."
+                    )
                 continue
-
         if not combined_refs:
             continue
         file_results = []
