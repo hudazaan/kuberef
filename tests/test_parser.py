@@ -1,4 +1,4 @@
-from kuberef.main import get_secret_refs
+from kuberef.main import get_secret_refs, get_yaml_files
 
 def test_recursive_discovery():
     """Test that secrets are found deep inside nested structures (like a Deployment)."""
@@ -300,3 +300,66 @@ def test_complex_pod_secret_references():
     assert "db-secret" in discovered_secrets, "Failed to extract secret from env.valueFrom"
     assert "api-keys" in discovered_secrets, "Failed to extract secret from envFrom"
     assert "ssl-certs" in discovered_secrets, "Failed to extract secret from volumes"
+def test_get_yaml_files_excludes_directories(tmp_path):
+    """Verify that get_yaml_files discovers valid YAMLs and filters out build/env/meta directories."""
+    # Create valid manifest files
+    valid_dir = tmp_path / "manifests"
+    valid_dir.mkdir()
+    valid_file = valid_dir / "pod.yaml"
+    valid_file.write_text("kind: Pod")
+    
+    # Create files inside excluded directories
+    git_dir = tmp_path / ".git"
+    git_dir.mkdir()
+    git_file = git_dir / "config.yaml"
+    git_file.write_text("some-git-config")
+    
+    venv_dir = tmp_path / ".venv"
+    venv_dir.mkdir()
+    venv_file = venv_dir / "lib.yml"
+    venv_file.write_text("some-venv-config")
+    
+    node_modules_dir = tmp_path / "node_modules"
+    node_modules_dir.mkdir()
+    node_modules_file = node_modules_dir / "package.yaml"
+    node_modules_file.write_text("npm-yaml")
+    
+    build_dir = tmp_path / "build"
+    build_dir.mkdir()
+    build_file = build_dir / "build-config.yaml"
+    build_file.write_text("some-build-config")
+    
+    # Run the get_yaml_files helper
+    discovered = get_yaml_files(tmp_path)
+    
+    # Assertions: Only pod.yaml should be found
+    discovered_names = [f.name for f in discovered]
+    assert "pod.yaml" in discovered_names
+    assert "config.yaml" not in discovered_names
+    assert "lib.yml" not in discovered_names
+    assert "package.yaml" not in discovered_names
+    assert "build-config.yaml" not in discovered_names
+    assert len(discovered) == 1
+
+
+def test_get_yaml_files_with_excluded_name_in_parent_path(tmp_path):
+    """Verify that get_yaml_files does not exclude files just because a parent directory contains an excluded name."""
+    # Create a parent directory named 'venv'
+    parent_dir = tmp_path / "venv"
+    parent_dir.mkdir()
+    
+    # Create a target directory inside the 'venv' folder
+    target_dir = parent_dir / "my-project"
+    target_dir.mkdir()
+    
+    # Create a valid yaml manifest inside 'my-project'
+    valid_file = target_dir / "deployment.yaml"
+    valid_file.write_text("kind: Deployment")
+    
+    # Scan the target directory
+    discovered = get_yaml_files(target_dir)
+    
+    # It should discover the valid deployment.yaml file!
+    discovered_names = [f.name for f in discovered]
+    assert "deployment.yaml" in discovered_names
+    assert len(discovered) == 1
