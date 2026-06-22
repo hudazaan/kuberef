@@ -87,14 +87,15 @@ def run_audit(files_to_scan: List[Path], namespace: str, v1: Any, quiet: bool = 
                         combined_refs.setdefault(name, set()).update(keys)
             except yaml.YAMLError:
                 if json_output:
-                   json_results.append({
-                       "file": yaml_file.name,
-                       "status": "INVALID_YAML"
-                   })
+                    json_results.append({
+                        "file": yaml_file.name,
+                        "status": "INVALID_YAML"
+                    })
                 else:
-                    console.print(
-                       f"[bold red]Error:[/bold red] Invalid YAML format in {yaml_file.name}. Skipping..."
-                    )
+                    if not quiet:
+                        console.print(
+                            f"[bold red]Error:[/bold red] Invalid YAML format in {yaml_file.name}. Skipping..."
+                        )
                 continue
         if not combined_refs:
             continue
@@ -234,8 +235,8 @@ Examples:
         cluster_name = active_context["name"]
         v1 = client.CoreV1Api()
         v1.read_namespace(name=namespace)
-        if not json_output:
-           console.print(f"[bold blue]Target Cluster:[/bold blue] {cluster_name}")
+        if not json_output and not quiet:
+            console.print(f"[bold blue]Target Cluster:[/bold blue] {cluster_name}")
     except Exception as e:
         console.print(f"[bold red]Pre-flight Error:[/bold red] {str(e)}")
         raise typer.Exit(1)
