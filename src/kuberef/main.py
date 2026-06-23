@@ -1,7 +1,6 @@
 import json
 import typer
 import yaml
-import json
 from pathlib import Path
 from typing import List, Dict, Any, Set
 from enum import Enum
@@ -166,22 +165,23 @@ def run_audit(
                         for k in missing:
                             if format == OutputFormat.GITHUB:
                                 print(f"::warning file={file_path},title=Missing Secret Key::The key '{k}' in secret '{name}' was not found.")
-                            sarif_results.append({
-                                "ruleId": "KR002",
-                                "level": "warning",
-                                "message": {
-                                    "text": f"The key '{k}' in secret '{name}' was not found."
-                                },
-                                "locations": [
-                                    {
-                                        "physicalLocation": {
-                                            "artifactLocation": {
-                                                "uri": file_path
+                            elif format == OutputFormat.SARIF:
+                                sarif_results.append({
+                                    "ruleId": "KR002",
+                                    "level": "warning",
+                                    "message": {
+                                        "text": f"The key '{k}' in secret '{name}' was not found."
+                                    },
+                                    "locations": [
+                                        {
+                                            "physicalLocation": {
+                                                "artifactLocation": {
+                                                    "uri": file_path
+                                                }
                                             }
                                         }
-                                    }
-                                ]
-                            })
+                                    ]
+                                })
                     else:
                         table.add_row(name, "[bold green]PASS[/bold green]")
                         file_results.append({
@@ -207,44 +207,45 @@ def run_audit(
                     global_failed += 1
                     if format == OutputFormat.GITHUB:
                         print(f"::error file={file_path},title=Missing Secret Reference::The secret '{name}' was not found in the cluster.")
-                    sarif_results.append({
-                        "ruleId": "KR001",
-                        "level": "error",
-                        "message": {
-                            "text": f"The secret '{name}' was not found in the cluster."
-                        },
-                        "locations": [
-                            {
-                                "physicalLocation": {
-                                    "artifactLocation": {
-                                        "uri": file_path
+                    elif format == OutputFormat.SARIF:
+                        sarif_results.append({
+                            "ruleId": "KR001",
+                            "level": "error",
+                            "message": {
+                                "text": f"The secret '{name}' was not found in the cluster."
+                            },
+                            "locations": [
+                                {
+                                    "physicalLocation": {
+                                        "artifactLocation": {
+                                            "uri": file_path
+                                        }
                                     }
                                 }
-                            }
-                        ]
-                    })
+                            ]
+                        })
                 else:
                     table.add_row(name, f"[dim]Error {e.status}[/dim]")
                     global_failed += 1
                     if format == OutputFormat.GITHUB:
                         print(f"::error file={file_path},title=Kubernetes API Error::Received HTTP {e.status} when checking secret '{name}'.")
-                    sarif_results.append({
-                        "ruleId": "KR003",
-                        "level": "error",
-                        "message": {
-                            "text": f"Received HTTP {e.status} when checking secret '{name}'."
-                        },
-                        "locations": [
-                            {
-                                "physicalLocation": {
-                                    "artifactLocation": {
-                                        "uri": file_path
+                    elif format == OutputFormat.SARIF:
+                        sarif_results.append({
+                            "ruleId": "KR003",
+                            "level": "error",
+                            "message": {
+                                "text": f"Received HTTP {e.status} when checking secret '{name}'."
+                            },
+                            "locations": [
+                                {
+                                    "physicalLocation": {
+                                        "artifactLocation": {
+                                            "uri": file_path
+                                        }
                                     }
                                 }
-                            }
-                        ]
-                    })
-        
+                            ]
+                        })
         json_results.append({
             "file": yaml_file.name,
             "results": file_results
@@ -400,7 +401,14 @@ Examples:
         console.print(f"[bold red]Pre-flight Error:[/bold red] {str(e)}")
         raise typer.Exit(1)
 
-    exit_code = run_audit(files_to_scan, namespace, v1, format=format, quiet=quiet, json_output=json_output)
+    exit_code = run_audit(
+        files_to_scan,
+        namespace,
+        v1,
+        format=format,
+        quiet=quiet,
+        json_output=json_output,
+    )
 
     if watch:
         from kuberef.watcher import run_watch_mode
