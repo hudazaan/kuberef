@@ -109,9 +109,10 @@ def run_audit(
                     })
                     global_failed += 1
                 else:
-                    console.print(
-                        f"[bold red]Error:[/bold red] Invalid YAML format in {yaml_file.name}. Skipping..."
-                    )
+                    if not quiet:
+                        console.print(
+                            f"[bold red]Error:[/bold red] Invalid YAML format in {yaml_file.name}. Skipping..."
+                        )
                     global_failed += 1
                     file_path = yaml_file.as_posix()
                     if format == OutputFormat.GITHUB:
@@ -393,8 +394,8 @@ Examples:
         cluster_name = active_context["name"]
         v1 = client.CoreV1Api()
         v1.read_namespace(name=namespace)
-        if not json_output:
-           console.print(f"[bold blue]Target Cluster:[/bold blue] {cluster_name}")
+        if not json_output and not quiet:
+            console.print(f"[bold blue]Target Cluster:[/bold blue] {cluster_name}")
     except Exception as e:
         console.print(f"[bold red]Pre-flight Error:[/bold red] {str(e)}")
         raise typer.Exit(1)
