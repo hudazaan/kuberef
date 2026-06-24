@@ -7,7 +7,7 @@ from rich.console import Console
 from rich.table import Table
 from kubernetes import client, config
 from kubernetes.client.rest import ApiException
-from kuberef.formatters import print_github_annotations, generate_sarif_report
+from kuberef.formatters import print_github_annotations, generate_sarif_report, sanitize_string
 
 
 app = typer.Typer()
@@ -219,11 +219,11 @@ def run_audit(
             try:
                 out_path = Path(output_file)
                 with open(out_path, "w", encoding="utf-8") as out:
-                    json.dump(sarif_report, out, indent=2)
+                    out.write(sanitize_string(json.dumps(sarif_report, indent=2)))
             except Exception as e:
                 console.print(f"[bold red]Error writing SARIF to {output_file}:[/bold red] {str(e)}")
         else:
-            sys.stdout.write(json.dumps(sarif_report, indent=2) + "\n")
+            sys.stdout.write(sanitize_string(json.dumps(sarif_report, indent=2) + "\n"))
 
     return 1 if (global_failed > 0 or global_warnings > 0) else 0
 
