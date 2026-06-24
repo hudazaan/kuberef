@@ -302,14 +302,14 @@ def test_github_formatter(capsys, tmp_path):
             "file_path": tmp_path / "deployment.yaml",
             "type": "error",
             "rule_id": "missing-secret",
-            "secret_name": "db-secret"
+            "res_name": "db-secret"
         },
         {
             "file_path": tmp_path / "pod.yaml",
             "type": "warning",
             "rule_id": "missing-key",
-            "secret_name": "api-secret",
-            "key_name": "token"
+            "res_name": "api-secret",
+            "res_key": "token"
         }
     ]
     # Create dummy files
@@ -333,7 +333,7 @@ def test_sarif_formatter(tmp_path):
             "file_path": tmp_path / "deployment.yaml",
             "type": "error",
             "rule_id": "missing-secret",
-            "secret_name": "db-secret"
+            "res_name": "db-secret"
         }
     ]
     (tmp_path / "deployment.yaml").write_text("name: db-secret")

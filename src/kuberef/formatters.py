@@ -1,11 +1,12 @@
 import json
 import re
+import sys
 from pathlib import Path
 from typing import List, Dict, Any
 
-def find_line_number(file_path: Path, secret_name: str, key_name: str = None) -> int:
+def find_line_number(file_path: Path, res_name: str, res_key: str = None) -> int:
     """
-    Finds a line number in a file that refers to the secret_name (and key_name if provided).
+    Finds a line number in a file that refers to the res_name (and res_key if provided).
     Returns 1 if not found or on failure.
     """
     try:
@@ -17,19 +18,19 @@ def find_line_number(file_path: Path, secret_name: str, key_name: str = None) ->
             lines = f.readlines()
         
         # Match secret name in fields like secretName, name (within secretKeyRef or secretRef)
-        secret_pat = re.compile(rf"\b(secretName|name)\s*:\s*[\"']?{re.escape(secret_name)}[\"']?\b")
-        if key_name:
-            key_pat = re.compile(rf"\bkey\s*:\s*[\"']?{re.escape(key_name)}[\"']?\b")
+        secret_pat = re.compile(rf"\b(secretName|name)\s*:\s*[\"']?{re.escape(res_name)}[\"']?\b")
+        if res_key:
+            key_pat = re.compile(rf"\bkey\s*:\s*[\"']?{re.escape(res_key)}[\"']?\b")
         
         secret_indices = []
         for idx, line in enumerate(lines):
-            if secret_pat.search(line) or secret_name in line:
+            if secret_pat.search(line) or res_name in line:
                 secret_indices.append(idx)
         
-        if key_name:
+        if res_key:
             key_indices = []
             for idx, line in enumerate(lines):
-                if key_pat.search(line) or key_name in line:
+                if key_pat.search(line) or res_key in line:
                     key_indices.append(idx)
             
             # Find the pair of (secret, key) that are closest to each other (e.g. within 15 lines)
@@ -71,21 +72,21 @@ def print_github_annotations(findings: List[Dict[str, Any]]):
         level = f["type"] # 'error' or 'warning'
         rule_id = f["rule_id"]
         
-        secret_name = f.get("secret_name", "")
-        key_name = f.get("key_name")
-        line = find_line_number(file_path, secret_name, key_name) if secret_name else 1
+        res_name = f.get("res_name", "")
+        res_key = f.get("res_key")
+        line = find_line_number(file_path, res_name, res_key) if res_name else 1
         
         if rule_id == "missing-secret":
             title = "Missing Secret Reference"
-            msg = f"The secret '{secret_name}' was not found in the cluster."
+            msg = f"The secret '{res_name}' was not found in the cluster."
         elif rule_id == "invalid-yaml":
             title = "Invalid YAML Format"
             msg = f"Invalid YAML format in {Path(file_path).name}."
         else:
             title = "Missing Secret Key"
-            msg = f"The key '{key_name}' of secret '{secret_name}' was not found in the cluster."
+            msg = f"The key '{res_key}' of secret '{res_name}' was not found in the cluster."
             
-        print(f"::{level} file={rel_path},line={line},title={title}::{msg}")
+        sys.stdout.write(f"::{level} file={rel_path},line={line},title={title}::{msg}\n")
 
 
 def generate_sarif_report(findings: List[Dict[str, Any]], files_scanned: int) -> Dict[str, Any]:
@@ -103,16 +104,16 @@ def generate_sarif_report(findings: List[Dict[str, Any]], files_scanned: int) ->
             
         level = f["type"] # 'error' or 'warning'
         rule_id = f["rule_id"]
-        secret_name = f.get("secret_name", "")
-        key_name = f.get("key_name")
-        line = find_line_number(file_path, secret_name, key_name) if secret_name else 1
+        res_name = f.get("res_name", "")
+        res_key = f.get("res_key")
+        line = find_line_number(file_path, res_name, res_key) if res_name else 1
         
         if rule_id == "missing-secret":
-            msg = f"The secret '{secret_name}' was not found in the cluster."
+            msg = f"The secret '{res_name}' was not found in the cluster."
         elif rule_id == "invalid-yaml":
             msg = f"Invalid YAML format in {Path(file_path).name}."
         else:
-            msg = f"The key '{key_name}' of secret '{secret_name}' was not found in the cluster."
+            msg = f"The key '{res_key}' of secret '{res_name}' was not found in the cluster."
             
         results.append({
             "ruleId": rule_id,

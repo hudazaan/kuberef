@@ -147,8 +147,8 @@ def run_audit(
                                 "file_path": yaml_file,
                                 "type": "warning",
                                 "rule_id": "missing-key",
-                                "secret_name": name,
-                                "key_name": key,
+                                "res_name": name,
+                                "res_key": key,
                             })
                         global_warnings += 1
                     else:
@@ -176,7 +176,7 @@ def run_audit(
                         "file_path": yaml_file,
                         "type": "error",
                         "rule_id": "missing-secret",
-                        "secret_name": name,
+                        "res_name": name,
                     })
                     global_failed += 1
                 else:
@@ -185,7 +185,7 @@ def run_audit(
                         "file_path": yaml_file,
                         "type": "error",
                         "rule_id": "missing-secret",
-                        "secret_name": name,
+                        "res_name": name,
                     })
                     global_failed += 1
 
@@ -213,6 +213,7 @@ def run_audit(
     if output_format == "github":
         print_github_annotations(findings)
     elif output_format == "sarif":
+        import sys
         sarif_report = generate_sarif_report(findings, len(files_to_scan))
         if output_file:
             try:
@@ -222,7 +223,7 @@ def run_audit(
             except Exception as e:
                 console.print(f"[bold red]Error writing SARIF to {output_file}:[/bold red] {str(e)}")
         else:
-            print(json.dumps(sarif_report, indent=2))
+            sys.stdout.write(json.dumps(sarif_report, indent=2) + "\n")
 
     return 1 if (global_failed > 0 or global_warnings > 0) else 0
 
