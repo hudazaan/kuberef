@@ -7,6 +7,8 @@ from rich.console import Console
 from rich.table import Table
 from kubernetes import client, config
 from kubernetes.client.rest import ApiException
+from kuberef.formatters import print_github_annotations, generate_sarif_report, sanitize_string
+
 
 app = typer.Typer()
 console = Console()
@@ -67,36 +69,55 @@ def build_summary(files_scanned: int, passed: int, failed: int, warnings: int, f
         "files": files,
     }
 
-def run_audit(files_to_scan: List[Path], namespace: str, v1: Any, quiet: bool = False, json_output: bool = False) -> int:
+def run_audit(
+    files_to_scan: List[Path],
+    namespace: str,
+    v1: Any,
+    quiet: bool = False,
+    json_output: bool = False,
+    output_format: str = "text",
+    output_file: Path = None,
+) -> int:
     """
     Core audit logic. Scans the given files against the live cluster.
     Returns exit code: 0 for clean, 1 for failures/warnings.
     """
     global_passed, global_failed, global_warnings = 0, 0, 0
     json_results = []
+    findings = []
+
+    is_sarif = output_format == "sarif"
+    effective_quiet = quiet or is_sarif
 
     for yaml_file in files_to_scan:
+        combined_refs: Dict[str, Set[str]] = {}
         with open(yaml_file, "r") as f:
             try:
                 docs = yaml.safe_load_all(f)
-                combined_refs: Dict[str, Set[str]] = {}
                 for doc in docs:
                     if not doc:
                         continue
                     for name, keys in get_secret_refs(doc).items():
                         combined_refs.setdefault(name, set()).update(keys)
             except yaml.YAMLError:
+                findings.append({
+                    "file_path": yaml_file,
+                    "type": "error",
+                    "rule_id": "invalid-yaml",
+                    "message": f"Invalid YAML format in {yaml_file.name}."
+                })
                 if json_output:
                     json_results.append({
                         "file": yaml_file.name,
                         "status": "INVALID_YAML"
                     })
                 else:
-                    if not quiet:
+                    if not effective_quiet:
                         console.print(
                             f"[bold red]Error:[/bold red] Invalid YAML format in {yaml_file.name}. Skipping..."
                         )
                 continue
+
         if not combined_refs:
             continue
         file_results = []
@@ -121,6 +142,14 @@ def run_audit(files_to_scan: List[Path], namespace: str, v1: Any, quiet: bool = 
                                 "status": "WARNING",
                                 "missing_keys": missing
                         })
+                        for key in missing:
+                            findings.append({
+                                "file_path": yaml_file,
+                                "type": "warning",
+                                "rule_id": "missing-key",
+                                "res_name": name,
+                                "res_key": key,
+                            })
                         global_warnings += 1
                     else:
                         table.add_row(name, "[bold green]PASS[/bold green]")
@@ -143,9 +172,21 @@ def run_audit(files_to_scan: List[Path], namespace: str, v1: Any, quiet: bool = 
                             "secret": name,
                             "status": "FAIL"
                     })
+                    findings.append({
+                        "file_path": yaml_file,
+                        "type": "error",
+                        "rule_id": "missing-secret",
+                        "res_name": name,
+                    })
                     global_failed += 1
                 else:
                     table.add_row(name, f"[dim]Error {e.status}[/dim]")
+                    findings.append({
+                        "file_path": yaml_file,
+                        "type": "error",
+                        "rule_id": "missing-secret",
+                        "res_name": name,
+                    })
                     global_failed += 1
 
         json_results.append({
@@ -153,13 +194,14 @@ def run_audit(files_to_scan: List[Path], namespace: str, v1: Any, quiet: bool = 
             "results": file_results
         })
 
-        if not quiet and not json_output:
+        if not effective_quiet and not json_output:
             console.print(table)
 
     summary = build_summary(len(files_to_scan), global_passed, global_failed, global_warnings, json_results)
     if json_output:
-        print(json.dumps(summary, indent=2))        
-    else:
+        if not is_sarif:
+            print(json.dumps(summary, indent=2))        
+    elif not is_sarif:
         console.print("\n" + "━" * 30)
         console.print("[bold underline]AUDIT SUMMARY[/bold underline]\n")
         console.print(f"📂 Files Scanned: {len(files_to_scan)}")
@@ -167,6 +209,21 @@ def run_audit(files_to_scan: List[Path], namespace: str, v1: Any, quiet: bool = 
         console.print(f"❌ Total Failed:   [red]{global_failed}[/red]")
         console.print(f"⚠️  Total Warnings: [yellow]{global_warnings}[/yellow]")
         console.print("━" * 30 + "\n")
+
+    if output_format == "github":
+        print_github_annotations(findings)
+    elif output_format == "sarif":
+        import sys
+        sarif_report = generate_sarif_report(findings, len(files_to_scan))
+        if output_file:
+            try:
+                out_path = Path(output_file)
+                with open(out_path, "w", encoding="utf-8") as out:
+                    out.write(sanitize_string(json.dumps(sarif_report, indent=2)))
+            except Exception as e:
+                console.print(f"[bold red]Error writing SARIF to {output_file}:[/bold red] {str(e)}")
+        else:
+            sys.stdout.write(sanitize_string(json.dumps(sarif_report, indent=2) + "\n"))
 
     return 1 if (global_failed > 0 or global_warnings > 0) else 0
 
@@ -202,6 +259,9 @@ def audit(
     quiet: bool = typer.Option(False, "--quiet", "-q", help="Silence per-file status tables and print only the summary"),
     watch: bool = typer.Option(False, "--watch", "-w", help="Stay running and re-audit on every .yaml/.yml file change."),
     json_output: bool = typer.Option(False, "--json", "-j", help="Output summary in JSON format"),
+    output_format: str = typer.Option("text", "--format", help="Output format: text, github, or sarif"),
+    ci: bool = typer.Option(False, "--ci", help="CI mode: alias for --format github"),
+    output_file: Path = typer.Option(None, "--output-file", "-o", help="Path to write the report (e.g. results.sarif)"),
 ):
     """
 Deep audit: Checks files or directories against Cluster, Namespace,
@@ -214,6 +274,13 @@ Examples:
   kuberef ./k8s-manifests/ -w         # Watch an entire directory
 
 """
+    if ci:
+        output_format = "github"
+
+    if output_format not in ("text", "github", "sarif"):
+        console.print(f"[bold red]Error:[/bold red] Invalid format '{output_format}'. Must be one of: text, github, sarif")
+        raise typer.Exit(1)
+
     target_path = Path(path_str)
 
     files_to_scan: List[Path] = []
@@ -235,13 +302,21 @@ Examples:
         cluster_name = active_context["name"]
         v1 = client.CoreV1Api()
         v1.read_namespace(name=namespace)
-        if not json_output and not quiet:
+        if not json_output and not quiet and output_format != "sarif":
             console.print(f"[bold blue]Target Cluster:[/bold blue] {cluster_name}")
     except Exception as e:
         console.print(f"[bold red]Pre-flight Error:[/bold red] {str(e)}")
         raise typer.Exit(1)
 
-    exit_code = run_audit(files_to_scan, namespace, v1, quiet=quiet, json_output=json_output)
+    exit_code = run_audit(
+        files_to_scan,
+        namespace,
+        v1,
+        quiet=quiet,
+        json_output=json_output,
+        output_format=output_format,
+        output_file=output_file,
+    )
 
     if watch:
         from kuberef.watcher import run_watch_mode
@@ -251,7 +326,15 @@ Examples:
                 updated_files = get_yaml_files(target_path)
             else:
                 updated_files = [changed_path]
-            run_audit(updated_files, namespace, v1, quiet=quiet, json_output=json_output)
+            run_audit(
+                updated_files,
+                namespace,
+                v1,
+                quiet=quiet,
+                json_output=json_output,
+                output_format=output_format,
+                output_file=output_file,
+            )
 
         run_watch_mode(target_path, _on_change)
     else:

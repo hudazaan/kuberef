@@ -261,3 +261,204 @@ def test_get_yaml_files_with_excluded_name_in_parent_path(tmp_path):
     discovered_names = [f.name for f in discovered]
     assert "deployment.yaml" in discovered_names
     assert len(discovered) == 1
+
+
+def test_find_line_number(tmp_path):
+    """Test find_line_number helper handles finding matching secret and key names."""
+    from kuberef.formatters import find_line_number
+    yaml_content = """apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: test-app
+spec:
+  template:
+    spec:
+      containers:
+      - name: web
+        env:
+        - name: DB_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: db-secret
+              key: password
+"""
+    manifest_file = tmp_path / "manifest.yaml"
+    manifest_file.write_text(yaml_content)
+    
+    # Locate secret definition
+    secret_line = find_line_number(manifest_file, "db-secret")
+    assert secret_line == 14
+    
+    # Locate key definition (should return the closest line of the key)
+    key_line = find_line_number(manifest_file, "db-secret", "password")
+    assert key_line == 15
+
+
+def test_github_formatter(capsys, tmp_path):
+    """Test print_github_annotations outputs correct ::error and ::warning format lines."""
+    from kuberef.formatters import print_github_annotations
+    findings = [
+        {
+            "file_path": tmp_path / "deployment.yaml",
+            "type": "error",
+            "rule_id": "missing-secret",
+            "res_name": "db-secret"
+        },
+        {
+            "file_path": tmp_path / "pod.yaml",
+            "type": "warning",
+            "rule_id": "missing-key",
+            "res_name": "api-secret",
+            "res_key": "token"
+        }
+    ]
+    # Create dummy files
+    (tmp_path / "deployment.yaml").write_text("name: db-secret")
+    (tmp_path / "pod.yaml").write_text("name: api-secret\nkey: token")
+    
+    print_github_annotations(findings)
+    captured = capsys.readouterr()
+    
+    assert "::error file=" in captured.out
+    assert "title=Missing Secret Reference::The secret 'db-secret' was not found in the cluster." in captured.out
+    assert "::warning file=" in captured.out
+    assert "title=Missing Secret Key::The key 'token' of secret 'api-secret' was not found in the cluster." in captured.out
+
+
+def test_sarif_formatter(tmp_path):
+    """Test generate_sarif_report formats a valid SARIF structure."""
+    from kuberef.formatters import generate_sarif_report
+    findings = [
+        {
+            "file_path": tmp_path / "deployment.yaml",
+            "type": "error",
+            "rule_id": "missing-secret",
+            "res_name": "db-secret"
+        }
+    ]
+    (tmp_path / "deployment.yaml").write_text("name: db-secret")
+    
+    sarif_data = generate_sarif_report(findings, 1)
+    
+    assert sarif_data["version"] == "2.1.0"
+    assert sarif_data["$schema"] == "https://json.schemastore.org/sarif-2.1.0.json"
+    assert len(sarif_data["runs"]) == 1
+    run = sarif_data["runs"][0]
+    assert run["tool"]["driver"]["name"] == "kuberef"
+    assert len(run["results"]) == 1
+    result = run["results"][0]
+    assert result["ruleId"] == "missing-secret"
+    assert result["level"] == "error"
+    assert "db-secret" in result["message"]["text"]
+
+
+def test_cli_audit_format_github(tmp_path):
+    """Integration test: audit --format github prints standard logs and github annotations."""
+    import os
+    import json
+    from unittest.mock import patch, MagicMock
+    from typer.testing import CliRunner
+    from kuberef.main import app
+
+    runner = CliRunner()
+    
+    yaml_content = """apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: my-deployment
+spec:
+  template:
+    spec:
+      containers:
+      - name: main
+        env:
+        - name: SECRET_VAR
+          valueFrom:
+            secretKeyRef:
+              name: missing-secret
+              key: some-key
+"""
+    manifest_file = tmp_path / "deployment.yaml"
+    manifest_file.write_text(yaml_content)
+
+    with patch("kuberef.main.config.load_kube_config") as mock_load, \
+         patch("kuberef.main.config.list_kube_config_contexts") as mock_contexts, \
+         patch("kuberef.main.client.CoreV1Api") as mock_api_class:
+        
+        mock_contexts.return_value = (None, {"name": "mock-cluster"})
+        mock_api = MagicMock()
+        mock_api_class.return_value = mock_api
+        
+        from kubernetes.client.rest import ApiException
+        mock_api.read_namespaced_secret.side_effect = ApiException(status=404, reason="Not Found")
+        
+        result = runner.invoke(app, [str(manifest_file), "--format", "github"])
+        
+        assert result.exit_code == 1
+        assert "Security Audit:" in result.output
+        assert "AUDIT SUMMARY" in result.output
+        assert "::error file=" in result.output
+        assert "title=Missing Secret Reference::The secret 'missing-secret' was not found in the cluster." in result.output
+
+
+def test_cli_audit_format_sarif(tmp_path):
+    """Integration test: audit --format sarif prints valid SARIF JSON to stdout or file."""
+    import os
+    import json
+    from unittest.mock import patch, MagicMock
+    from typer.testing import CliRunner
+    from kuberef.main import app
+
+    runner = CliRunner()
+    
+    yaml_content = """apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: my-deployment
+spec:
+  template:
+    spec:
+      containers:
+      - name: main
+        env:
+        - name: SECRET_VAR
+          valueFrom:
+            secretKeyRef:
+              name: missing-secret
+              key: some-key
+"""
+    manifest_file = tmp_path / "deployment.yaml"
+    manifest_file.write_text(yaml_content)
+
+    with patch("kuberef.main.config.load_kube_config") as mock_load, \
+         patch("kuberef.main.config.list_kube_config_contexts") as mock_contexts, \
+         patch("kuberef.main.client.CoreV1Api") as mock_api_class:
+        
+        mock_contexts.return_value = (None, {"name": "mock-cluster"})
+        mock_api = MagicMock()
+        mock_api_class.return_value = mock_api
+        
+        from kubernetes.client.rest import ApiException
+        mock_api.read_namespaced_secret.side_effect = ApiException(status=404, reason="Not Found")
+        
+        # Test output to stdout
+        result = runner.invoke(app, [str(manifest_file), "--format", "sarif"])
+        assert result.exit_code == 1
+        assert "Security Audit:" not in result.output
+        assert "AUDIT SUMMARY" not in result.output
+        
+        sarif_out = json.loads(result.output)
+        assert sarif_out["version"] == "2.1.0"
+        assert len(sarif_out["runs"][0]["results"]) == 1
+        
+        # Test output to file
+        sarif_file = tmp_path / "output.sarif"
+        result_file = runner.invoke(app, [str(manifest_file), "--format", "sarif", "--output-file", str(sarif_file)])
+        assert result_file.exit_code == 1
+        assert result_file.output == ""
+        
+        assert sarif_file.is_file()
+        with open(sarif_file, "r") as sf:
+            file_sarif = json.load(sf)
+        assert file_sarif["version"] == "2.1.0"
+        assert file_sarif["runs"][0]["results"][0]["ruleId"] == "missing-secret"
