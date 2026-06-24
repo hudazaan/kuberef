@@ -108,7 +108,32 @@ kuberef <YOUR_FILE>.yaml --namespace <YOUR_NAMESPACE>
 **Example Output**: 
 
 ![Audit](https://raw.githubusercontent.com/hudazaan/kuberef/main/docs/images/audit-kuberef.png)
+### Advanced Formatting
 
+Kuberef supports multiple output formats through the `--format` flag.
+
+#### Available Formats
+
+- `text` (default) - Displays results in a human-readable table format.
+- `github` - Outputs GitHub Actions annotations (`::error`, `::warning`) alongside readable results.
+- `sarif` - Generates SARIF v2.1.0 compatible output for static analysis tooling.
+
+#### Writing Output to a File
+
+Use `--output-file` (or `-o`) to write structured output formats such as SARIF to a file instead of printing them to the terminal.
+
+#### Examples
+
+```bash
+# Run an audit with GitHub workflow annotations
+kuberef ./test-manifests/ --format github
+
+# Export a SARIF report to a file
+kuberef ./test-manifests/ --format sarif --output-file current-audit.sarif
+
+# Short flag variant
+kuberef ./test-manifests/ --format sarif -o current-audit.sarif
+```
 ### Watch Mode
 
 Stay running and re-audit automatically whenever a `.yaml` or `.yml` file changes:
