@@ -120,6 +120,21 @@ kuberef ./k8s-manifests/ -w
 
 Press `Ctrl+C` to stop.
 
+
+### Advanced Formatting
+
+Configure custom report styles and automate static analysis ingestion within CI pipeline runners.
+
+Choose a specialized output style using the `--format` flag:
+* `text`: Default visual Rich UI tables rendered directly in the terminal output.
+* `github`: Appends workflow environment structures (`::error`, `::warning`) for automated GitHub Action runner inline annotations.
+* `sarif`: Generates a machine-readable JSON structure matching the standardized SARIF v2.1.0 specification.
+
+Route structured data into a specific file path instead of the standard terminal output:
+```bash
+kuberef ./test-manifests/ --format sarif --output-file current-audit.sarif
+kuberef ./test-manifests/ --format sarif -o current-audit.sarif
+
 ---
 
 ## Technical Architecture
