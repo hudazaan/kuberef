@@ -1,0 +1,6 @@
+apiVersion: v2
+name: my-helm-chart
+description: A dummy Helm chart for testing kuberef native Helm template rendering
+type: application
+version: 0.1.0
+appVersion: "1.16.0"
