@@ -103,6 +103,18 @@ General Syntax to add path to your Kubernetes manifest:
 
 ```bash
 kuberef <YOUR_FILE>.yaml --namespace <YOUR_NAMESPACE>
+
+### Summary-Only Mode
+
+For cleaner log outputs—especially inside automated CI/CD pipeline environments—you can use the summary-only mode. This option suppresses the verbose, per-file evaluation tables and prints only the final aggregate **AUDIT SUMMARY** statistical overview.
+
+You can trigger this mode using either the long flag (`--quiet`) or the short flag (`-q`).
+
+#### Examples
+
+**Scan a directory with summary-only output (Long Flag):**
+```bash
+kuberef ./test-manifests/ --quiet
 ```
 
 **Example Output**: 
