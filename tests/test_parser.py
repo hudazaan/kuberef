@@ -616,3 +616,156 @@ def test_helm_rendering_command_failure(tmp_path):
         assert result.exit_code == 1
         assert "Helm Template Error:" in result.output
         assert "failed to parse Chart.yaml" in result.output
+
+
+def test_helm_rendering_github_format(tmp_path):
+    """Test Helm chart rendering and integration with GitHub output format."""
+    import os
+    import subprocess
+    from unittest.mock import patch, MagicMock
+    from typer.testing import CliRunner
+    from kuberef.main import app
+
+    runner = CliRunner()
+    
+    # Set up dummy chart dir
+    chart_dir = tmp_path / "my-chart"
+    chart_dir.mkdir()
+    (chart_dir / "Chart.yaml").write_text("apiVersion: v2\nname: my-chart")
+    
+    mock_rendered_yaml = """apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: release-name-deployment
+spec:
+  template:
+    spec:
+      containers:
+      - name: web
+        env:
+        - name: DB_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: db-secret
+              key: password
+        - name: ANOTHER_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: missing-secret-ref
+              key: token
+"""
+
+    with patch("kuberef.main.config.load_kube_config") as mock_load, \
+         patch("kuberef.main.config.list_kube_config_contexts") as mock_contexts, \
+         patch("kuberef.main.client.CoreV1Api") as mock_api_class, \
+         patch("subprocess.run") as mock_run:
+        
+        mock_contexts.return_value = (None, {"name": "mock-cluster"})
+        mock_api = MagicMock()
+        mock_api_class.return_value = mock_api
+        
+        def mock_read_secret(name, namespace=None):
+            if name == "db-secret":
+                secret = MagicMock()
+                secret.data = {"password": "pwd"}
+                return secret
+            from kubernetes.client.rest import ApiException
+            raise ApiException(status=404, reason="Not Found")
+            
+        mock_api.read_namespaced_secret.side_effect = mock_read_secret
+        
+        def mock_subprocess_run(args, **kwargs):
+            mock_res = MagicMock()
+            mock_res.returncode = 0
+            if args == ["helm", "version"]:
+                mock_res.stdout = "version.BuildInfo{Version:\"v3.12.0\"}"
+            elif args == ["helm", "template", str(chart_dir)]:
+                mock_res.stdout = mock_rendered_yaml
+            return mock_res
+            
+        mock_run.side_effect = mock_subprocess_run
+        
+        result = runner.invoke(app, [str(chart_dir), "--format", "github"])
+        
+        assert result.exit_code == 1
+        assert "::error file=Helm Template: my-chart" in result.output
+        assert "The secret 'missing-secret-ref' was not found in the cluster." in result.output
+
+
+def test_helm_rendering_sarif_format(tmp_path):
+    """Test Helm chart rendering and integration with SARIF output format."""
+    import os
+    import json
+    import subprocess
+    from unittest.mock import patch, MagicMock
+    from typer.testing import CliRunner
+    from kuberef.main import app
+
+    runner = CliRunner()
+    
+    # Set up dummy chart dir
+    chart_dir = tmp_path / "my-chart"
+    chart_dir.mkdir()
+    (chart_dir / "Chart.yaml").write_text("apiVersion: v2\nname: my-chart")
+    
+    mock_rendered_yaml = """apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: release-name-deployment
+spec:
+  template:
+    spec:
+      containers:
+      - name: web
+        env:
+        - name: DB_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: db-secret
+              key: password
+        - name: ANOTHER_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: missing-secret-ref
+              key: token
+"""
+
+    with patch("kuberef.main.config.load_kube_config") as mock_load, \
+         patch("kuberef.main.config.list_kube_config_contexts") as mock_contexts, \
+         patch("kuberef.main.client.CoreV1Api") as mock_api_class, \
+         patch("subprocess.run") as mock_run:
+        
+        mock_contexts.return_value = (None, {"name": "mock-cluster"})
+        mock_api = MagicMock()
+        mock_api_class.return_value = mock_api
+        
+        def mock_read_secret(name, namespace=None):
+            if name == "db-secret":
+                secret = MagicMock()
+                secret.data = {"password": "pwd"}
+                return secret
+            from kubernetes.client.rest import ApiException
+            raise ApiException(status=404, reason="Not Found")
+            
+        mock_api.read_namespaced_secret.side_effect = mock_read_secret
+        
+        def mock_subprocess_run(args, **kwargs):
+            mock_res = MagicMock()
+            mock_res.returncode = 0
+            if args == ["helm", "version"]:
+                mock_res.stdout = "version.BuildInfo{Version:\"v3.12.0\"}"
+            elif args == ["helm", "template", str(chart_dir)]:
+                mock_res.stdout = mock_rendered_yaml
+            return mock_res
+            
+        mock_run.side_effect = mock_subprocess_run
+        
+        result = runner.invoke(app, [str(chart_dir), "--format", "sarif"])
+        
+        assert result.exit_code == 1
+        sarif_data = json.loads(result.output)
+        assert sarif_data["version"] == "2.1.0"
+        results = sarif_data["runs"][0]["results"]
+        assert len(results) == 1
+        assert results[0]["ruleId"] == "missing-secret"
+        assert results[0]["locations"][0]["physicalLocation"]["artifactLocation"]["uri"] == "Helm Template: my-chart"
