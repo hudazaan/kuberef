@@ -9,10 +9,8 @@ from kubernetes import client, config
 from kubernetes.client.rest import ApiException
 from kuberef.formatters import print_github_annotations, generate_sarif_report, sanitize_string
 
-
 app = typer.Typer()
 console = Console()
-
 
 def find_pod_specs(data: Any) -> List[Dict[str, Any]]:
     """Recursively finds all Pod 'spec' blocks (handles Deployments, Jobs, etc.)."""
@@ -26,7 +24,6 @@ def find_pod_specs(data: Any) -> List[Dict[str, Any]]:
         for item in data:
             specs.extend(find_pod_specs(item))
     return specs
-
 
 def get_secret_refs(data: Dict[str, Any]) -> Dict[str, Set[str]]:
     """Maps secret names to the specific keys they need to provide."""
@@ -60,6 +57,31 @@ def get_secret_refs(data: Dict[str, Any]) -> Dict[str, Set[str]]:
 
     return all_refs
 
+def get_configmap_refs(data: Dict[str, Any]) -> Dict[str, Set[str]]:
+    """Maps ConfigMap names to the specific keys they need to provide (Issue #10)."""
+    all_refs = {}
+
+    def add_ref(name: str, key: str = None):
+        if not name:
+            return
+        if name not in all_refs:
+            all_refs[name] = set()
+        if key:
+            all_refs[name].add(key)
+
+    for spec in find_pod_specs(data):
+        containers = spec.get("containers", []) + spec.get("initContainers", [])
+        for c in containers:
+            for env in c.get("env", []):
+                if "valueFrom" in env and "configMapKeyRef" in env["valueFrom"]:
+                    ref = env["valueFrom"]["configMapKeyRef"]
+                    add_ref(ref.get("name"), ref.get("key"))
+            for ef in c.get("envFrom", []):
+                if "configMapRef" in ef:
+                    add_ref(ef["configMapRef"].get("name"))
+
+    return all_refs
+
 def build_summary(files_scanned: int, passed: int, failed: int, warnings: int, files: list):
     return {
         "files_scanned": files_scanned,
@@ -90,15 +112,20 @@ def run_audit(
     effective_quiet = quiet or is_sarif
 
     for yaml_file in files_to_scan:
-        combined_refs: Dict[str, Set[str]] = {}
+        combined_secret_refs: Dict[str, Set[str]] = {}
+        combined_configmap_refs: Dict[str, Set[str]] = {}
+        
         with open(yaml_file, "r") as f:
             try:
                 docs = yaml.safe_load_all(f)
                 for doc in docs:
                     if not doc:
                         continue
+                    # Extract both Secrets and ConfigMaps
                     for name, keys in get_secret_refs(doc).items():
-                        combined_refs.setdefault(name, set()).update(keys)
+                        combined_secret_refs.setdefault(name, set()).update(keys)
+                    for name, keys in get_configmap_refs(doc).items():
+                        combined_configmap_refs.setdefault(name, set()).update(keys)
             except yaml.YAMLError:
                 findings.append({
                     "file_path": yaml_file,
@@ -118,76 +145,90 @@ def run_audit(
                         )
                 continue
 
-        if not combined_refs:
+        if not combined_secret_refs and not combined_configmap_refs:
             continue
+            
         file_results = []
 
         table = Table(title=f"Security Audit: {yaml_file.name}")
-        table.add_column("Secret Name", style="cyan")
+        table.add_column("Type", style="magenta") # New column to differentiate
+        table.add_column("Resource Name", style="cyan")
         table.add_column("Status", justify="left")
 
-        for name, keys in combined_refs.items():
-            try:
-                secret = v1.read_namespaced_secret(name, namespace)
-                if keys:
-                    existing_keys = (secret.data or {}).keys()
-                    missing = [k for k in keys if k not in existing_keys]
-                    if missing:
-                        table.add_row(
-                            name,
-                            f"[bold yellow]KEY MISSING: {', '.join(missing)}[/bold yellow]",
-                        )
-                        file_results.append({
-                                "secret": name,
-                                "status": "WARNING",
-                                "missing_keys": missing
-                        })
-                        for key in missing:
-                            findings.append({
-                                "file_path": yaml_file,
-                                "type": "warning",
-                                "rule_id": "missing-key",
-                                "res_name": name,
-                                "res_key": key,
+        # Map to iterate over both resource types seamlessly
+        resources_to_check = [
+            ("Secret", combined_secret_refs, v1.read_namespaced_secret),
+            ("ConfigMap", combined_configmap_refs, v1.read_namespaced_config_map)
+        ]
+
+        for res_type, refs, api_call in resources_to_check:
+            for name, keys in refs.items():
+                try:
+                    resource = api_call(name, namespace)
+                    if keys:
+                        existing_keys = (resource.data or {}).keys()
+                        missing = [k for k in keys if k not in existing_keys]
+                        if missing:
+                            table.add_row(
+                                res_type,
+                                name,
+                                f"[bold yellow]KEY MISSING: {', '.join(missing)}[/bold yellow]",
+                            )
+                            file_results.append({
+                                    "resource": name,
+                                    "type": res_type,
+                                    "status": "WARNING",
+                                    "missing_keys": missing
                             })
-                        global_warnings += 1
+                            for key in missing:
+                                findings.append({
+                                    "file_path": yaml_file,
+                                    "type": "warning",
+                                    "rule_id": "missing-key" if res_type == "Secret" else "missing-configmap-key",
+                                    "res_name": name,
+                                    "res_key": key,
+                                })
+                            global_warnings += 1
+                        else:
+                            table.add_row(res_type, name, "[bold green]PASS[/bold green]")
+                            file_results.append({
+                                 "resource": name,
+                                 "type": res_type,
+                                 "status": "PASS"
+                            })
+                            global_passed += 1
                     else:
-                        table.add_row(name, "[bold green]PASS[/bold green]")
+                        table.add_row(res_type, name, "[bold green]PASS (Found)[/bold green]")
                         file_results.append({
-                             "secret": name,
-                             "status": "PASS"
+                            "resource": name,
+                            "type": res_type,
+                            "status": "PASS"
                         })
                         global_passed += 1
-                else:
-                    table.add_row(name, "[bold green]PASS (Found)[/bold green]")
-                    file_results.append({
-                        "secret": name,
-                        "status": "PASS"
-                    })
-                    global_passed += 1
-            except ApiException as e:
-                if e.status == 404:
-                    table.add_row(name, "[bold red]FAIL (Secret Missing)[/bold red]")
-                    file_results.append({
-                            "secret": name,
-                            "status": "FAIL"
-                    })
-                    findings.append({
-                        "file_path": yaml_file,
-                        "type": "error",
-                        "rule_id": "missing-secret",
-                        "res_name": name,
-                    })
-                    global_failed += 1
-                else:
-                    table.add_row(name, f"[dim]Error {e.status}[/dim]")
-                    findings.append({
-                        "file_path": yaml_file,
-                        "type": "error",
-                        "rule_id": "missing-secret",
-                        "res_name": name,
-                    })
-                    global_failed += 1
+                except ApiException as e:
+                    if e.status == 404:
+                        table.add_row(res_type, name, f"[bold red]FAIL ({res_type} Missing)[/bold red]")
+                        file_results.append({
+                                "resource": name,
+                                "type": res_type,
+                                "status": "FAIL"
+                        })
+                        findings.append({
+                            "file_path": yaml_file,
+                            "type": "error",
+                            "rule_id": "missing-secret" if res_type == "Secret" else "missing-configmap",
+                            "res_name": name,
+                        })
+                        global_failed += 1
+                    else:
+                        table.add_row(res_type, name, f"[dim]Error {e.status}[/dim]")
+                        findings.append({
+                            "file_path": yaml_file,
+                            "type": "error",
+                            "rule_id": "missing-secret" if res_type == "Secret" else "missing-configmap",
+                            "res_name": name,
+                        })
+                        global_failed += 1
 
         json_results.append({
             "file": yaml_file.name,
@@ -227,7 +268,6 @@ def run_audit(
 
     return 1 if (global_failed > 0 or global_warnings > 0) else 0
 
-
 EXCLUDE_DIRS = {
     ".git",
     ".github",
@@ -242,7 +282,6 @@ EXCLUDE_DIRS = {
     ".pytest_cache",
 }
 
-
 def get_yaml_files(target_path: Path) -> List[Path]:
     """Recursively gets all YAML files, filtering out standard excluded directories."""
     files = list(target_path.rglob("*.yaml")) + list(target_path.rglob("*.yml"))
@@ -250,7 +289,6 @@ def get_yaml_files(target_path: Path) -> List[Path]:
         f for f in files
         if not any(part in EXCLUDE_DIRS for part in f.relative_to(target_path).parts)
     ]
-
 
 @app.command()
 def audit(
@@ -265,15 +303,8 @@ def audit(
 ):
     """
 Deep audit: Checks files or directories against Cluster, Namespace,
-and Secret keys.
-
-Examples:
-  kuberef deployment.yaml             # Scan a single manifest file
-  kuberef ./k8s-manifests/            # Scan an entire directory
-  kuberef deployment.yaml --watch     # Re-audit automatically on file changes
-  kuberef ./k8s-manifests/ -w         # Watch an entire directory
-
-"""
+and Secret/ConfigMap keys.
+    """
     if ci:
         output_format = "github"
 
@@ -340,10 +371,8 @@ Examples:
     else:
         raise typer.Exit(exit_code)
 
-
 def start():
     app()
-
 
 if __name__ == "__main__":
     start()

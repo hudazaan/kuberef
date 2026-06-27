@@ -1,0 +1,19 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: configmap-test-pod
+spec:
+  containers:
+  - name: my-app
+    image: nginx
+    env:
+    # 1. Yeh test fail hona chahiye (Kyunki 'missing-configmap' cluster mein nahi hai)
+    - name: BAD_ENV
+      valueFrom:
+        configMapKeyRef:
+          name: missing-configmap
+          key: some-key
+    # 2. Yeh test pass hona chahiye (Humein ek default configmap reference check karna hai)
+    envFrom:
+    - configMapRef:
+        name: kube-root-ca.crt # Yeh har k8s namespace mein default hota hai
