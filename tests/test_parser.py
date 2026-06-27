@@ -769,3 +769,39 @@ spec:
         assert len(results) == 1
         assert results[0]["ruleId"] == "missing-secret"
         assert results[0]["locations"][0]["physicalLocation"]["artifactLocation"]["uri"] == "Helm Template: my-chart"
+
+
+def test_context_and_kubeconfig_forwarding(tmp_path):
+    """Test that the CLI options --context and --kubeconfig are correctly forwarded to config.load_kube_config."""
+    from unittest.mock import patch, MagicMock
+    from typer.testing import CliRunner
+    from kuberef.main import app
+
+    runner = CliRunner()
+    
+    yaml_content = "apiVersion: v1\nkind: Pod\nmetadata:\n  name: my-pod\n"
+    manifest_file = tmp_path / "pod.yaml"
+    manifest_file.write_text(yaml_content)
+
+    with patch("kuberef.main.config.load_kube_config") as mock_load, \
+         patch("kuberef.main.config.list_kube_config_contexts") as mock_contexts, \
+         patch("kuberef.main.client.CoreV1Api") as mock_api_class:
+        
+        mock_contexts.return_value = (None, {"name": "custom-cluster"})
+        mock_api = MagicMock()
+        mock_api_class.return_value = mock_api
+        
+        result = runner.invoke(app, [
+            str(manifest_file),
+            "--context", "dev-cluster",
+            "--kubeconfig", "/path/to/kubeconfig"
+        ])
+        
+        import os
+        expected_path = os.path.normpath("/path/to/kubeconfig")
+        
+        assert result.exit_code in (0, 1)
+        mock_load.assert_called_once_with(
+            config_file=expected_path,
+            context="dev-cluster"
+        )
