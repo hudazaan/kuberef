@@ -104,6 +104,52 @@ General Syntax to add path to your Kubernetes manifest:
 ```bash
 kuberef <YOUR_FILE>.yaml --namespace <YOUR_NAMESPACE>
 ```
+### JSON Output
+
+Kuberef supports machine-readable JSON output for CI/CD pipelines, automation scripts, and log compliance aggregators. Using the `--json` (or `-j`) flag bypasses the default Rich terminal tables and prints a structured JSON summary directly to standard output.
+
+#### Command Examples
+
+```bash
+# Execute a single-shot evaluation with JSON formatting
+kuberef ./test-manifests/ --json
+
+# Short-flag variation example
+kuberef ./test-manifests/ -j
+```
+
+#### JSON Response Schema
+
+```json
+{
+  "files_scanned": 2,
+  "passes": 5,
+  "failures": 1,
+  "warnings": 1,
+  "files": [
+    {
+      "file": "deployment.yaml",
+      "results": [
+        {
+          "secret": "app-secret",
+          "status": "PASS"
+        },
+        {
+          "secret": "database-secret",
+          "status": "WARNING",
+          "missing_keys": [
+            "PASSWORD"
+          ]
+        },
+        {
+          "secret": "redis-secret",
+          "status": "FAIL"
+        }
+      ]
+    }
+  ]
+}
+```
 
 **Example Output**: 
 
