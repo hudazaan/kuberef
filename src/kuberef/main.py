@@ -343,11 +343,22 @@ Examples:
         return
 
     try:
+        import os
+        resolved_context = context if context else os.environ.get("KUBECTL_PLUGINS_CURRENT_CONTEXT")
+        resolved_kubeconfig = kubeconfig
+
+        is_plugin_or_external = (
+            bool(resolved_kubeconfig)
+            or bool(resolved_context)
+            or "KUBECONFIG" in os.environ
+            or "KUBECTL_PLUGINS_CURRENT_CONTEXT" in os.environ
+        )
+
         is_incluster = False
-        if kubeconfig or context:
+        if is_plugin_or_external:
             config.load_kube_config(
-                config_file=str(kubeconfig) if kubeconfig else None,
-                context=context
+                config_file=str(resolved_kubeconfig) if resolved_kubeconfig else None,
+                context=resolved_context
             )
         else:
             try:

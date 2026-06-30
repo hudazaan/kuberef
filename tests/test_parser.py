@@ -833,4 +833,71 @@ def test_incluster_config_fallback(tmp_path):
         
         assert result.exit_code in (0, 1)
         mock_load_kube.assert_called_once()
-        mock_load_incluster.assert_called_once()
+        mock_load_incluster.assert_called_once()
+
+
+def test_context_resolution_from_env_plugin(tmp_path):
+    """Test that context is resolved from KUBECTL_PLUGINS_CURRENT_CONTEXT if not explicitly set."""
+    from unittest.mock import patch, MagicMock
+    import os
+    from typer.testing import CliRunner
+    from kuberef.main import app
+
+    runner = CliRunner()
+    manifest_file = tmp_path / "pod.yaml"
+    manifest_file.write_text("apiVersion: v1\nkind: Pod\nmetadata:\n  name: my-pod\n")
+
+    with patch.dict(os.environ, {"KUBECTL_PLUGINS_CURRENT_CONTEXT": "my-plugin-context"}), \
+         patch("kuberef.main.config.load_kube_config") as mock_load_kube, \
+         patch("kuberef.main.config.list_kube_config_contexts") as mock_contexts, \
+         patch("kuberef.main.client.CoreV1Api") as mock_api_class:
+
+        mock_contexts.return_value = (None, {"name": "my-plugin-context"})
+        mock_api = MagicMock()
+        mock_api_class.return_value = mock_api
+
+        result = runner.invoke(app, [str(manifest_file)])
+
+        assert result.exit_code in (0, 1)
+        mock_load_kube.assert_called_once_with(
+            config_file=None,
+            context="my-plugin-context"
+        )
+
+
+def test_no_incluster_fallback_for_plugin_env(tmp_path):
+    """Test that we do not fallback to in-cluster config when KUBECTL_PLUGINS_CURRENT_CONTEXT or KUBECONFIG is set."""
+    from unittest.mock import patch, MagicMock
+    import os
+    from typer.testing import CliRunner
+    from kuberef.main import app
+
+    runner = CliRunner()
+    manifest_file = tmp_path / "pod.yaml"
+    manifest_file.write_text("apiVersion: v1\nkind: Pod\nmetadata:\n  name: my-pod\n")
+
+    # Scenario A: KUBECTL_PLUGINS_CURRENT_CONTEXT is set
+    with patch.dict(os.environ, {"KUBECTL_PLUGINS_CURRENT_CONTEXT": "some-context"}), \
+         patch("kuberef.main.config.load_kube_config") as mock_load_kube, \
+         patch("kuberef.main.config.load_incluster_config") as mock_load_incluster:
+
+        mock_load_kube.side_effect = Exception("Load config failed")
+
+        result = runner.invoke(app, [str(manifest_file)])
+
+        assert result.exit_code == 1
+        mock_load_kube.assert_called_once()
+        mock_load_incluster.assert_not_called()
+
+    # Scenario B: KUBECONFIG is set
+    with patch.dict(os.environ, {"KUBECONFIG": "/some/kubeconfig"}), \
+         patch("kuberef.main.config.load_kube_config") as mock_load_kube, \
+         patch("kuberef.main.config.load_incluster_config") as mock_load_incluster:
+
+        mock_load_kube.side_effect = Exception("Load config failed")
+
+        result = runner.invoke(app, [str(manifest_file)])
+
+        assert result.exit_code == 1
+        mock_load_kube.assert_called_once()
+        mock_load_incluster.assert_not_called()
