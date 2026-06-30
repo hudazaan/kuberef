@@ -343,13 +343,25 @@ Examples:
         return
 
     try:
-        config.load_kube_config(
-            config_file=str(kubeconfig) if kubeconfig else None,
-            context=context
-        )
+        is_incluster = False
+        if kubeconfig or context:
+            config.load_kube_config(
+                config_file=str(kubeconfig) if kubeconfig else None,
+                context=context
+            )
+        else:
+            try:
+                config.load_kube_config()
+            except Exception:
+                config.load_incluster_config()
+                is_incluster = True
+
         try:
-            _, active_context = config.list_kube_config_contexts()
-            cluster_name = active_context["name"] if active_context else "unknown"
+            if is_incluster:
+                cluster_name = "in-cluster"
+            else:
+                _, active_context = config.list_kube_config_contexts()
+                cluster_name = active_context["name"] if active_context else "unknown"
         except Exception:
             cluster_name = "unknown"
         v1 = client.CoreV1Api()
