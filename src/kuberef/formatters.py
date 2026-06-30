@@ -14,18 +14,21 @@ def sanitize_string(s: str) -> str:
     return "".join(chr(ord(c)) for c in str(s))
 
 
-def find_line_number(file_path: Path, res_name: str, res_key: str = None) -> int:
+def find_line_number(file_path: Any, res_name: str, res_key: str = None) -> int:
     """
     Finds a line number in a file that refers to the res_name (and res_key if provided).
     Returns 1 if not found or on failure.
     """
     try:
-        path = Path(file_path)
-        if not path.is_file():
-            return 1
-        
-        with open(path, "r", encoding="utf-8", errors="ignore") as f:
-            lines = f.readlines()
+        if hasattr(file_path, "content") and file_path.content is not None:
+            lines = file_path.content.splitlines()
+        else:
+            path = Path(file_path)
+            if not path.is_file():
+                return 1
+            
+            with open(path, "r", encoding="utf-8", errors="ignore") as f:
+                lines = f.readlines()
         
         # Match secret name in fields like secretName, name (within secretKeyRef or secretRef)
         secret_pat = re.compile(rf"\b(secretName|name)\s*:\s*[\"']?{re.escape(res_name)}[\"']?\b")
@@ -76,7 +79,7 @@ def print_github_annotations(findings: List[Dict[str, Any]]):
         file_path = f["file_path"]
         try:
             rel_path = str(Path(file_path).relative_to(Path.cwd()))
-        except ValueError:
+        except (ValueError, TypeError):
             rel_path = str(file_path)
         
         level = f["type"] # 'error' or 'warning'
@@ -91,7 +94,7 @@ def print_github_annotations(findings: List[Dict[str, Any]]):
             msg = f"The secret '{res_name}' was not found in the cluster."
         elif rule_id == "invalid-yaml":
             title = "Invalid YAML Format"
-            msg = f"Invalid YAML format in {Path(file_path).name}."
+            msg = f"Invalid YAML format in {file_path.name}."
         else:
             title = "Missing Secret Key"
             msg = f"The key '{res_key}' of secret '{res_name}' was not found in the cluster."
@@ -109,7 +112,7 @@ def generate_sarif_report(findings: List[Dict[str, Any]], files_scanned: int) ->
         file_path = f["file_path"]
         try:
             rel_path = str(Path(file_path).relative_to(Path.cwd())).replace("\\", "/")
-        except ValueError:
+        except (ValueError, TypeError):
             rel_path = str(file_path).replace("\\", "/")
             
         level = f["type"] # 'error' or 'warning'
@@ -121,7 +124,7 @@ def generate_sarif_report(findings: List[Dict[str, Any]], files_scanned: int) ->
         if rule_id == "missing-secret":
             msg = f"The secret '{res_name}' was not found in the cluster."
         elif rule_id == "invalid-yaml":
-            msg = f"Invalid YAML format in {Path(file_path).name}."
+            msg = f"Invalid YAML format in {file_path.name}."
         else:
             msg = f"The key '{res_key}' of secret '{res_name}' was not found in the cluster."
             

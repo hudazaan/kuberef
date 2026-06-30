@@ -1,4 +1,5 @@
 import json
+import subprocess
 import typer
 import yaml
 from pathlib import Path
@@ -11,6 +12,22 @@ from kuberef.formatters import print_github_annotations, generate_sarif_report, 
 
 app = typer.Typer()
 console = Console()
+
+
+class ScanTarget:
+    def __init__(self, name: str, path: Path, content: str = None):
+        self.name = name
+        self.path = path
+        self.content = content
+
+    def __str__(self) -> str:
+        return self.name
+
+
+def is_helm_chart(path: Path) -> bool:
+    """Checks if a directory is a Helm chart by looking for Chart.yaml or Chart.yml."""
+    return path.is_dir() and ((path / "Chart.yaml").is_file() or (path / "Chart.yml").is_file())
+
 
 def find_pod_specs(data: Any) -> List[Dict[str, Any]]:
     """Recursively finds all Pod 'spec' blocks (handles Deployments, Jobs, etc.)."""
@@ -92,7 +109,7 @@ def build_summary(files_scanned: int, passed: int, failed: int, warnings: int, f
     }
 
 def run_audit(
-    files_to_scan: List[Path],
+    files_to_scan: List[Any],
     namespace: str,
     v1: Any,
     quiet: bool = False,
@@ -127,6 +144,22 @@ def run_audit(
                     for name, keys in get_configmap_refs(doc).items():
                         combined_configmap_refs.setdefault(name, set()).update(keys)
             except yaml.YAMLError:
+        combined_refs: Dict[str, Set[str]] = {}
+        
+        has_content = hasattr(yaml_file, "content") and yaml_file.content is not None
+        try:
+            if has_content:
+                docs = yaml.safe_load_all(yaml_file.content)
+            else:
+                with open(yaml_file, "r", encoding="utf-8") as f:
+                    content = f.read()
+                docs = yaml.safe_load_all(content)
+            for doc in docs:
+                if not doc:
+                    continue
+                for name, keys in get_secret_refs(doc).items():
+                    combined_refs.setdefault(name, set()).update(keys)
+        except yaml.YAMLError:
                 findings.append({
                     "file_path": yaml_file,
                     "type": "error",
@@ -314,8 +347,30 @@ and Secret/ConfigMap keys.
 
     target_path = Path(path_str)
 
-    files_to_scan: List[Path] = []
-    if target_path.is_dir():
+    files_to_scan: List[Any] = []
+    if is_helm_chart(target_path):
+        try:
+            subprocess.run(["helm", "version"], capture_output=True, check=True)
+        except (FileNotFoundError, subprocess.CalledProcessError):
+            console.print("[bold red]Error:[/bold red] Helm CLI not found. Please install Helm to audit Helm charts natively.")
+            raise typer.Exit(1)
+
+        try:
+            result = subprocess.run(
+                ["helm", "template", str(target_path)],
+                capture_output=True,
+                text=True,
+                check=True
+            )
+            files_to_scan = [ScanTarget(
+                name=f"Helm Template: {target_path.name}",
+                path=target_path,
+                content=result.stdout
+            )]
+        except subprocess.CalledProcessError as e:
+            console.print(f"[bold red]Helm Template Error:[/bold red]\n{e.stderr}")
+            raise typer.Exit(1)
+    elif target_path.is_dir():
         files_to_scan = get_yaml_files(target_path)
     elif target_path.is_file():
         files_to_scan = [target_path]
@@ -353,7 +408,26 @@ and Secret/ConfigMap keys.
         from kuberef.watcher import run_watch_mode
 
         def _on_change(changed_path: Path) -> None:
-            if target_path.is_dir():
+            if is_helm_chart(target_path):
+                try:
+                    result = subprocess.run(
+                        ["helm", "template", str(target_path)],
+                        capture_output=True,
+                        text=True,
+                        check=True
+                    )
+                    updated_files = [ScanTarget(
+                        name=f"Helm Template: {target_path.name}",
+                        path=target_path,
+                        content=result.stdout
+                    )]
+                except (FileNotFoundError, subprocess.CalledProcessError) as e:
+                    if isinstance(e, FileNotFoundError):
+                        console.print("[bold red]Error:[/bold red] Helm CLI not found.")
+                    else:
+                        console.print(f"[bold red]Helm Template Error:[/bold red]\n{e.stderr}")
+                    return
+            elif target_path.is_dir():
                 updated_files = get_yaml_files(target_path)
             else:
                 updated_files = [changed_path]
