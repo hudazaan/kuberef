@@ -105,6 +105,27 @@ General Syntax to add path to your Kubernetes manifest:
 kuberef <YOUR_FILE>.yaml --namespace <YOUR_NAMESPACE>
 ```
 
+### Advanced Formatting
+
+Kuberef supports CI-friendly output modes for automated pipelines and static analysis ingestion:
+
+- `--format text`: the default Rich terminal experience with visual summary tables.
+- `--format github`: prints the normal tables and appends GitHub workflow commands such as `::error` and `::warning` so GitHub Actions can create inline annotations.
+- `--format sarif`: generates a machine-readable JSON report that matches the SARIF v2.1.0 specification.
+
+Use `--output-file` or `-o` to route structured output, especially SARIF, into a file instead of writing it to the terminal. This keeps terminal logs readable while preserving the report for upload or archival.
+
+```bash
+# Run an audit with native GitHub Workflow annotations appended
+kuberef ./test-manifests/ --format github
+
+# Export a static analysis report matching the SARIF schema to a file
+kuberef ./test-manifests/ --format sarif --output-file current-audit.sarif
+
+# Short-flag variation for file routing
+kuberef ./test-manifests/ --format sarif -o current-audit.sarif
+```
+
 **Example Output**: 
 
 ![Audit](https://raw.githubusercontent.com/hudazaan/kuberef/main/docs/images/audit-kuberef.png)
